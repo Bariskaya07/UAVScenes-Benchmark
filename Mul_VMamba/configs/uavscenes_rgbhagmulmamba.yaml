@@ -1,0 +1,98 @@
+# =========================================================================
+# Mul-VMamba UAVScenes Configuration (Fair Comparison Benchmark)
+# RGB + HAG Multi-Modal Semantic Segmentation
+# Target: Fair comparison with CMNeXt, DFormerV2, Sigma
+#
+# Architecture:
+# - VMamba-T backbone (fair comparison with CMNeXt mit_b2)
+# - 2 modalities: RGB + HAG (Height Above Ground)
+# - MCFM (Cross-S6) for multi-modal fusion
+# =========================================================================
+
+# -------------------------------------------------------------------------
+# DEVICE & OUTPUT
+# -------------------------------------------------------------------------
+DEVICE          : cuda
+SAVE_DIR        : 'output/UAVScenes_MulVMamba'
+
+# -------------------------------------------------------------------------
+# MODEL CONFIG
+# -------------------------------------------------------------------------
+MODEL:
+  NAME          : MulMamba                                          # Model name
+  BACKBONE      : MulMamba-T                                        # VMamba-Tiny backbone (fair comparison)
+  PRETRAINED    : 'checkpoints/pretrained/Vmamba/VmambaTiny.pth'    # Pretrained weights
+  RESUME        : ''                                                # Checkpoint for resume
+  EXP           : 'uavscenes_rgb_hag'                               # Experiment name
+  EXTRA_IN_CHANS: 3                                                 # Aux modality input channels (3=stacked for backward compat)
+
+# -------------------------------------------------------------------------
+# DATASET CONFIG
+# -------------------------------------------------------------------------
+DATASET:
+  NAME          : UAVScenes                                         # Dataset name
+  ROOT          : 'data/UAVScenes'                                  # Symlink to actual data
+  IGNORE_LABEL  : 255                                               # Ignore index
+  AUX_CHANNELS  : 3                                                 # Dataset aux channels (3=stacked for backward compat)
+  # 2 modalities for UAVScenes (RGB + HAG)
+  MODALS        : ['image', 'hag']
+
+# -------------------------------------------------------------------------
+# TRAINING CONFIG (Fair Comparison: 768x768, batch=8)
+# -------------------------------------------------------------------------
+TRAIN:
+  IMAGE_SIZE    : [768, 768]      # Training size (fair comparison with CMNeXt/DFormerV2)
+  BATCH_SIZE    : 8               # Same as CMNeXt/DFormerV2
+  EPOCHS        : 60              # Training epochs
+  EVAL_START    : 10              # Start evaluation after epoch 10
+  EVAL_INTERVAL : 5               # Evaluate every 5 epochs
+  AMP           : true            # Mixed precision for memory efficiency
+  DDP           : false           # Single GPU mode
+
+# -------------------------------------------------------------------------
+# LOSS FUNCTION
+# -------------------------------------------------------------------------
+LOSS:
+  NAME          : CrossEntropy        # Standard CE (fair comparison with other models)
+  CLS_WEIGHTS   : false               # No class weights
+
+# -------------------------------------------------------------------------
+# OPTIMIZER (Standardized for fair comparison)
+# -------------------------------------------------------------------------
+OPTIMIZER:
+  NAME          : AdamW
+  LR            : 0.00006         # 6e-5
+  WEIGHT_DECAY  : 0.01
+  BETAS         : [0.9, 0.999]
+
+# -------------------------------------------------------------------------
+# SCHEDULER (Standardized for fair comparison)
+# -------------------------------------------------------------------------
+SCHEDULER:
+  NAME          : PolyLR
+  MAX_EPOCHS    : 60
+  POWER         : 0.9             # PolyLR power (CMNeXt paper setting)
+  WARMUP_TYPE   : linear
+  WARMUP_EPOCHS : 3               # Warmup epochs (10/200 × 60 ≈ 3)
+  WARMUP_RATIO  : 0.1             # CMNeXt paper setting
+
+# -------------------------------------------------------------------------
+# EVALUATION CONFIG (Sliding Window)
+# -------------------------------------------------------------------------
+EVAL:
+  MODEL_PATH    : 'output/UAVScenes_MulVMamba/best.pth'
+  IMAGE_SIZE    : [768, 768]      # Sliding window size
+  BATCH_SIZE    : 1
+  MSF:
+    ENABLE      : false
+    FLIP        : true
+    SCALES      : [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]
+
+# -------------------------------------------------------------------------
+# TEST CONFIG
+# -------------------------------------------------------------------------
+TEST:
+  MODEL_PATH    : 'output/UAVScenes_MulVMamba/best.pth'
+  FILE          : 'data/UAVScenes'
+  IMAGE_SIZE    : [768, 768]
+  OVERLAY       : false

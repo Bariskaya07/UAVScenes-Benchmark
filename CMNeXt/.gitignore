@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+
+# Data and checkpoints (too large for GitHub)
+data/
+checkpoints/
+output/
+*.pth
+*.pt
+*.ckpt
+
+# Logs and temporary files
+*.log
+.DS_Store
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Project specific
+*.xlsx
+*.csv
+wandb/
+.claude/

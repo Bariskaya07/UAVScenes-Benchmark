@@ -1,0 +1,97 @@
+# =========================================================================
+# Mul-VMamba DELIVER Configuration
+# RGB + LiDAR Multi-Modal Semantic Segmentation
+# Target: Cross-dataset evaluation with UAVScenes
+#
+# Architecture:
+# - VMamba-T backbone
+# - 2 modalities: RGB + LiDAR (1-ch stacked to 3-ch)
+# - MCFM (Cross-S6) for multi-modal fusion
+# =========================================================================
+
+# -------------------------------------------------------------------------
+# DEVICE & OUTPUT
+# -------------------------------------------------------------------------
+DEVICE          : cuda
+SAVE_DIR        : 'output/DELIVER_MulVMamba'
+
+# -------------------------------------------------------------------------
+# MODEL CONFIG
+# -------------------------------------------------------------------------
+MODEL:
+  NAME          : MulMamba
+  BACKBONE      : MulMamba-T
+  PRETRAINED    : 'checkpoints/pretrained/Vmamba/VmambaTiny.pth'
+  RESUME        : ''
+  EXP           : 'deliver_rgb_lidar'
+  EXTRA_IN_CHANS: 3                                                 # LiDAR: 1-ch stacked to 3-ch
+
+# -------------------------------------------------------------------------
+# DATASET CONFIG
+# -------------------------------------------------------------------------
+DATASET:
+  NAME          : DELIVER
+  ROOT          : 'data/DELIVER'
+  IGNORE_LABEL  : 255
+  AUX_CHANNELS  : 3                                                 # LiDAR: 1-ch stacked to 3-ch
+  MODALS        : ['image', 'lidar']
+
+# -------------------------------------------------------------------------
+# TRAINING CONFIG
+# -------------------------------------------------------------------------
+TRAIN:
+  IMAGE_SIZE    : [1024, 1024]
+  BATCH_SIZE    : 4
+  EPOCHS        : 60
+  EVAL_START    : 10
+  EVAL_INTERVAL : 5
+  AMP           : true
+  DDP           : false
+
+# -------------------------------------------------------------------------
+# LOSS FUNCTION
+# -------------------------------------------------------------------------
+LOSS:
+  NAME          : CrossEntropy
+  CLS_WEIGHTS   : false
+
+# -------------------------------------------------------------------------
+# OPTIMIZER
+# -------------------------------------------------------------------------
+OPTIMIZER:
+  NAME          : AdamW
+  LR            : 0.00006
+  WEIGHT_DECAY  : 0.01
+  BETAS         : [0.9, 0.999]
+
+# -------------------------------------------------------------------------
+# SCHEDULER
+# -------------------------------------------------------------------------
+SCHEDULER:
+  NAME          : PolyLR
+  MAX_EPOCHS    : 60
+  POWER         : 1.0
+  WARMUP_TYPE   : linear
+  WARMUP_EPOCHS : 3
+  WARMUP_RATIO  : 0.000001
+
+# -------------------------------------------------------------------------
+# EVALUATION CONFIG
+# -------------------------------------------------------------------------
+EVAL:
+  MODEL_PATH    : 'output/DELIVER_MulVMamba/best.pth'
+  IMAGE_SIZE    : [1024, 1024]
+  BATCH_SIZE    : 1
+  MSF:
+    ENABLE      : false
+    FLIP        : true
+    SCALES      : [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]
+
+# -------------------------------------------------------------------------
+# TEST CONFIG
+# -------------------------------------------------------------------------
+TEST:
+  MODEL_PATH    : 'output/DELIVER_MulVMamba/best.pth'
+  FILE          : 'data/DELIVER'
+  IMAGE_SIZE    : [1024, 1024]
+  OVERLAY       : false

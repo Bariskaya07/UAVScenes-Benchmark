@@ -1,0 +1,170 @@
+# =========================================================================
+# CMNeXt UAVScenes Configuration (Paper-Compliant)
+# RGB + HAG Multi-Modal Semantic Segmentation
+# Target: A100 40GB GPU (GCP)
+#
+# Architecture:
+# - RGB: MiT-B2 backbone (ImageNet pretrained)
+# - HAG: PPX encoder (random init) - as per paper Section 3.3
+# =========================================================================
+
+# -------------------------------------------------------------------------
+# DEVICE & OUTPUT
+# -------------------------------------------------------------------------
+DEVICE: cuda
+SAVE_DIR: 'output/UAVScenes_CMNeXt_B2'
+SEED: 42                     # Reproducibility
+
+# -------------------------------------------------------------------------
+# MODEL CONFIG
+# -------------------------------------------------------------------------
+MODEL:
+  NAME: CMNeXt
+  BACKBONE: mit_b2           # SegFormer-B2 Backbone
+  PRETRAINED: checkpoints/pretrained/mit_b2.pth
+  NUM_CLASSES: 19            # 19 classes (remapped)
+  EMBED_DIM: 768             # Decoder embedding dimension
+  AUX_IN_CHANS: 3            # Input channels for aux modality (3=stacked HAG for backward compat)
+
+# -------------------------------------------------------------------------
+# DATASET CONFIG
+# -------------------------------------------------------------------------
+DATASET:
+  NAME: UAVScenes
+  ROOT: data/UAVScenes       # Symlink to actual data
+  IGNORE_LABEL: 255          # Ignore index for loss computation
+  AUX_CHANNELS: 3            # Dataset aux channels (3=stacked HAG for backward compat)
+  MODALS:
+    - img                    # RGB (hub modality)
+    - hag                    # Height Above Ground (auxiliary)
+  # ImageNet normalization for RGB
+  MEAN:
+    - 0.485
+    - 0.456
+    - 0.406
+  STD:
+    - 0.229
+    - 0.224
+    - 0.225
+
+# -------------------------------------------------------------------------
+# TRAINING CONFIG (Single A100 40GB - Testing batch=8 with PPX)
+# -------------------------------------------------------------------------
+TRAIN:
+  IMAGE_SIZE:
+    - 768
+    - 768                    # Reduced from 1024 for memory efficiency
+  BATCH_SIZE: 8              # Direct batch=8 (PPX reduces VRAM)
+  GRAD_ACCUM: 1              # No accumulation - testing real VRAM usage
+  EPOCHS: 60                 # Training epochs
+  EVAL_START: 5              # Start evaluation after epoch 5
+  EVAL_INTERVAL: 5           # Evaluate every 5 epochs
+  AMP: true                  # Mixed Precision for memory efficiency
+  DDP: false                 # Single GPU mode
+  WORKERS: 8                 # Data loading workers
+
+  # Early Stopping - Prevent unnecessary training
+  EARLY_STOP:
+    ENABLE: true
+    PATIENCE: 3              # 3 evaluations = 15 epochs (3×5)
+    MIN_DELTA: 0.001         # Minimum improvement threshold (0.1% mIoU)
+    METRIC: 'mIoU'           # Metric to monitor
+
+# -------------------------------------------------------------------------
+# LOSS FUNCTION
+# -------------------------------------------------------------------------
+LOSS:
+  NAME: CrossEntropy         # Standard CE (as per original paper)
+  IGNORE_INDEX: 255          # Must match DATASET.IGNORE_LABEL
+
+# -------------------------------------------------------------------------
+# OPTIMIZER & SCHEDULER
+# -------------------------------------------------------------------------
+OPTIMIZER:
+  NAME: AdamW
+  LR: 0.00006                # 6e-5 (standard for fair comparison)
+  WEIGHT_DECAY: 0.01
+  BETAS:
+    - 0.9
+    - 0.999
+
+SCHEDULER:
+  NAME: PolyLR
+  MAX_EPOCHS: 60
+  POWER: 0.9                 # Original CMNeXt paper setting
+  WARMUP_TYPE: linear
+  WARMUP_EPOCHS: 3           # 5% of total epochs (10/200 × 60 ≈ 3)
+  WARMUP_RATIO: 0.1          # Original CMNeXt paper setting
+
+# -------------------------------------------------------------------------
+# TEST / EVAL CONFIG (Sliding Window - Quality First)
+# -------------------------------------------------------------------------
+EVAL:
+  MODEL_PATH: ''             # Auto-load best checkpoint
+  IMAGE_SIZE:
+    - 768
+    - 768                    # Sliding window size
+  BATCH_SIZE: 1              # Safe for sliding window
+
+  # STRATEGY: SLIDING WINDOW (Full Resolution Inference)
+  # Why: UAVScenes 2448×2048 -> resize loses 79% pixels!
+  # Small objects (traffic barrier, umbrella) would disappear
+  MODE: 'slide'              # NOT 'whole' - preserve small objects
+  STRIDE:
+    - 512
+    - 512                    # ~33% overlap for 768 window
+  CROP_SIZE:
+    - 768
+    - 768                    # Window size
+
+TEST:
+  MODE: 'slide'
+  STRIDE:
+    - 512
+    - 512
+  CROP_SIZE:
+    - 768
+    - 768
+
+# -------------------------------------------------------------------------
+# AUGMENTATION CONFIG
+# -------------------------------------------------------------------------
+AUGMENTATION:
+  # Training augmentations
+  TRAIN:
+    RANDOM_RESIZE:
+      ENABLE: true
+      SCALE:
+        - 0.5
+        - 2.0
+    RANDOM_CROP:
+      ENABLE: true
+      SIZE:
+        - 768
+        - 768
+    RANDOM_HFLIP:
+      ENABLE: true
+      PROB: 0.5
+    PHOTOMETRIC:
+      ENABLE: true           # Only for RGB, not HAG
+      BRIGHTNESS: 0.2
+      CONTRAST: 0.2
+      SATURATION: 0.2
+      HUE: 0.1
+    GAUSSIAN_BLUR:
+      ENABLE: true           # As per paper
+      PROB: 0.5
+      KERNEL_SIZE: 5
+
+  # Test augmentations (minimal)
+  TEST:
+    NORMALIZE_ONLY: true     # Only normalize, no resize
+
+# -------------------------------------------------------------------------
+# LOGGING
+# -------------------------------------------------------------------------
+LOGGING:
+  TENSORBOARD: true
+  LOG_INTERVAL: 50           # Log every 50 iterations
+  SAVE_BEST_ONLY: true       # Only save best checkpoint
+  SAVE_INTERVAL: 10          # Also save every 10 epochs

@@ -1,0 +1,201 @@
+# TokenFusion UAVScenes Configuration
+# RGB + HAG Multi-Modal Semantic Segmentation
+# Fair comparison settings matching CMNeXt and DFormerv2
+
+# ==============================================================================
+# Dataset Configuration
+# ==============================================================================
+dataset:
+  name: "UAVScenes"
+  data_path: "/home/bariskaya/Projelerim/UAV/UAVScenesData"
+  num_classes: 19
+  ignore_label: 255
+
+  # Class names (for logging)
+  class_names:
+    - "background"
+    - "roof"
+    - "dirt_road"
+    - "paved_road"
+    - "river"
+    - "pool"
+    - "bridge"
+    - "container"
+    - "airstrip"
+    - "traffic_barrier"
+    - "green_field"
+    - "wild_field"
+    - "solar_panel"
+    - "umbrella"
+    - "transparent_roof"
+    - "car_park"
+    - "paved_walk"
+    - "sedan"
+    - "truck"
+
+# ==============================================================================
+# Model Configuration
+# ==============================================================================
+model:
+  # MiT-B2 backbone for fair comparison with CMNeXt
+  backbone: "mit_b2"
+  embedding_dim: 256
+  # Input channels: TokenFusion uses shared weights, both modalities need 3ch
+  in_chans: 3  # RGB and HAG both use 3 channels (HAG stacked in dataset)
+
+  # Pretrained weights (download from SegFormer)
+  pretrained: "pretrained/mit_b2.pth"
+
+# ==============================================================================
+# Training Configuration
+# ==============================================================================
+training:
+  # Image size (768x768 for fair comparison)
+  image_size: 768
+  crop_size: 768
+
+  # Batch size (8 for fair comparison)
+  batch_size: 8
+  num_workers: 8
+
+  # Training schedule
+  epochs: 60
+  max_iter: 24000  # ~60 epochs with ~400 iter/epoch
+
+  # Validation frequency
+  val_every: 5  # Validate every N epochs
+  save_every: 10  # Save checkpoint every N epochs
+
+  # Random seed
+  seed: 42
+
+  # Mixed precision training
+  amp: true
+
+# ==============================================================================
+# Optimizer Configuration
+# ==============================================================================
+optimizer:
+  type: AdamW
+  lr: 6.0e-5
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+
+# ==============================================================================
+# Scheduler Configuration
+# ==============================================================================
+scheduler:
+  type: PolyLR
+  max_epochs: 60
+  power: 0.9           # CMNeXt paper setting
+  warmup_type: linear
+  warmup_epochs: 3
+  warmup_ratio: 0.1    # CMNeXt paper setting
+
+  # Layer-wise learning rate multiplier
+  lr_mult: 10.0  # For norm layers and decoder
+
+# ==============================================================================
+# Loss Configuration
+# ==============================================================================
+loss:
+  # Cross entropy + L1 sparsity
+  # NOTE: Paper uses 1e-4 for image translation, 1e-3 for segmentation
+  lamda: 1.0e-3  # L1 sparsity weight for masks (segmentation setting)
+
+# ==============================================================================
+# TokenFusion Configuration
+# ==============================================================================
+tokenfusion:
+  # Token exchange threshold
+  mask_threshold: 0.02
+
+  # Number of parallel modalities
+  num_parallel: 2
+
+# ==============================================================================
+# Data Augmentation (Standardized - matching CMNeXt)
+# ==============================================================================
+augmentation:
+  # Random scale
+  scale_range: [0.5, 2.0]
+
+  # Random crop
+  crop_size: [768, 768]
+
+  # Random horizontal flip
+  flip_prob: 0.5
+
+  # Photometric distortion (RGB only, not HAG)
+  photometric:
+    enable: true
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+    hue: 0.1
+
+  # Gaussian blur (RGB only, not HAG)
+  gaussian_blur:
+    enable: true
+    prob: 0.5
+    kernel_size: 5
+
+# ==============================================================================
+# HAG (Height Above Ground) Configuration
+# ==============================================================================
+hag:
+  # Maximum height for normalization (50m for fair comparison)
+  max_meters: 50.0
+  # Dataset aux channels (3 for TokenFusion shared weights architecture)
+  aux_channels: 3
+
+# ==============================================================================
+# Normalization
+# ==============================================================================
+normalization:
+  # RGB: ImageNet normalization
+  rgb_mean: [0.485, 0.456, 0.406]
+  rgb_std: [0.229, 0.224, 0.225]
+
+  # HAG: Centered normalization (data is in 0-1 range)
+  hag_mean: [0.5, 0.5, 0.5]
+  hag_std: [0.5, 0.5, 0.5]
+
+# ==============================================================================
+# Evaluation Configuration
+# ==============================================================================
+evaluation:
+  # Sliding window inference
+  mode: "slide"
+  slide_size: 768
+  slide_stride: 512
+
+# ==============================================================================
+# Logging and Checkpointing
+# ==============================================================================
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  tensorboard: true
+
+  # Logging frequency
+  print_freq: 20  # Print every N iterations
+
+# ==============================================================================
+# Distributed Training (optional)
+# ==============================================================================
+distributed:
+  enabled: false
+  backend: "nccl"
+
+# ==============================================================================
+# Fair Comparison Checklist
+# ==============================================================================
+# ✓ 768x768 training resolution (same as CMNeXt/DFormerv2)
+# ✓ Batch size 8 (same as CMNeXt/DFormerv2)
+# ✓ HAG normalization 50m max (same as CMNeXt/DFormerv2)
+# ✓ Same train/val/test scene split (13/3/4 scenes - NewSplit.md)
+# ✓ Same 19 class label mapping
+# ✓ MiT-B2 backbone (same as CMNeXt)
+# ✓ Sliding window evaluation 768x768 stride 512
+# ✓ Same metrics (mIoU, static mIoU, dynamic mIoU)

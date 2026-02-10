@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Checkpoints & Models (too large for git)
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.pkl
+
+# Data
+data/
+datasets/UAVScenes/
+datasets/DELIVER/
+UAVScenesData/
+
+# Logs & Outputs
+logs/
+output/
+runs/
+tb/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# Temporary files
+*.tmp
+*.temp
