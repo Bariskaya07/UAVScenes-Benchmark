@@ -14,7 +14,7 @@ from .. import *
 
 # Dataset configuration
 C.dataset_name = "UAVScenes"
-C.dataset_path = "/home/bariskaya/Projelerim/UAV/UAVScenesData"
+C.dataset_path = "data/UAVScenes"  # VM: ln -s ~/data/UAVScenesData data/UAVScenes
 
 # Path structure for UAVScenes (note the nested directory structure!)
 # RGB: interval5_CAM_LIDAR/interval5_CAM_LIDAR/{scene}/interval5_CAM/{timestamp}.jpg
