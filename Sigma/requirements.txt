@@ -1,18 +1,30 @@
-#torch==1.8.2+cu102
-#cudnn==7.6.5
-easydict>=1.9
+# Sigma (Siamese Mamba) UAVScenes Requirements
+# VM: CUDA 11.8, Python 3.10
+
+# PyTorch (CUDA 11.8)
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Mamba dependencies (CUDA 11.8+)
+causal-conv1d>=1.1.0
+mamba-ssm>=1.1.0
+
+# Core dependencies
+numpy>=1.24.0
 opencv-python>=4.5.0
-timm>=0.4.10
 scipy>=1.7.0
 tqdm>=4.40.0
+Pillow>=9.0.0
+
+# Config & logging
+easydict>=1.9
+PyYAML>=6.0
 tensorboardX>=2.2
-packaging
-timm==0.4.12
-pytest 
-chardet 
-yacs 
-termcolor
-submitit 
-tensorboardX
+
+# Utilities
+timm>=0.9.0
 fvcore
-seaborn
+tabulate
+termcolor
+packaging

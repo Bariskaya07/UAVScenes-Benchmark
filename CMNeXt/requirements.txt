@@ -1,10 +1,10 @@
 # CMNeXt UAVScenes Requirements
-# Python 3.8, CUDA 11.3
+# VM: CUDA 11.8, Python 3.10
 
-# PyTorch - MUST install first, pinned to prevent override
-torch==1.11.0+cu113
-torchvision==0.12.0+cu113
---extra-index-url https://download.pytorch.org/whl/cu113
+# PyTorch (CUDA 11.8)
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch>=2.0.0
+torchvision>=0.15.0
 
 # Core
 numpy>=1.21.0,<2.0
@@ -22,5 +22,5 @@ tqdm>=4.60.0
 matplotlib>=3.5.0
 scipy>=1.7.0
 
-# timm - pinned to work with torch 1.11
-timm==0.6.13
+# timm for MiT backbone
+timm>=0.9.0
