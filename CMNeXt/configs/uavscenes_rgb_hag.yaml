@@ -89,11 +89,10 @@ OPTIMIZER:
     - 0.999
 
 SCHEDULER:
-  NAME: PolyLR
+  NAME: WarmupPolyLR
   MAX_EPOCHS: 60
   POWER: 0.9                 # Original CMNeXt paper setting
-  WARMUP_TYPE: linear
-  WARMUP_EPOCHS: 3           # 5% of total epochs (10/200 × 60 ≈ 3)
+  WARMUP: 3                  # Warmup epochs (5% of total)
   WARMUP_RATIO: 0.1          # Original CMNeXt paper setting
 
 # -------------------------------------------------------------------------
