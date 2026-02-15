@@ -80,20 +80,16 @@ optimizer:
   lr: 6.0e-5
   betas: [0.9, 0.999]
   weight_decay: 0.01
+  warmup_iter: 1500    # Warmup iterations (~3 epochs)
+  power: 0.9           # PolyLR power (CMNeXt paper setting)
 
 # ==============================================================================
-# Scheduler Configuration
+# Scheduler Configuration (used by PolyWarmupAdamW)
 # ==============================================================================
 scheduler:
-  type: PolyLR
   max_epochs: 60
-  power: 0.9           # CMNeXt paper setting
-  warmup_type: linear
-  warmup_epochs: 3
   warmup_ratio: 0.1    # CMNeXt paper setting
-
-  # Layer-wise learning rate multiplier
-  lr_mult: 10.0  # For norm layers and decoder
+  lr_mult: 10.0        # For norm layers and decoder
 
 # ==============================================================================
 # Loss Configuration
