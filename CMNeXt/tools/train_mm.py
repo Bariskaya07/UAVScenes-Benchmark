@@ -256,8 +256,21 @@ def evaluate(model, dataloader, device, cfg, num_classes=19):
             # Sliding window inference
             logits = sliding_window_inference(model, inputs, cfg)
         else:
-            # Whole image inference
-            logits = model(inputs)
+            # Whole image inference (resize to training size for speed)
+            orig_size = target.shape[-2:]  # (H, W)
+            eval_size = cfg.get('EVAL', {}).get('IMAGE_SIZE', [768, 768])
+
+            # Resize inputs to eval size
+            if isinstance(inputs, (list, tuple)):
+                inputs_resized = [F.interpolate(x, size=eval_size, mode='bilinear', align_corners=False) for x in inputs]
+            else:
+                inputs_resized = F.interpolate(inputs, size=eval_size, mode='bilinear', align_corners=False)
+
+            # Forward pass at reduced resolution
+            logits = model(inputs_resized)
+
+            # Upsample back to original size
+            logits = F.interpolate(logits, size=orig_size, mode='bilinear', align_corners=False)
 
         # Get predictions
         pred = logits.argmax(dim=1)
