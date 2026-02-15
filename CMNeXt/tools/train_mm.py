@@ -234,8 +234,15 @@ def evaluate(model, dataloader, device, cfg, num_classes=19):
     metrics = UAVScenesMetrics(num_classes=num_classes, ignore_label=255)
 
     eval_mode = cfg.get('EVAL', {}).get('MODE', 'whole')
+    total_samples = len(dataloader)
+    eval_start_time = time.time()
 
-    for inputs, target in dataloader:
+    for idx, (inputs, target) in enumerate(dataloader):
+        # Progress bar
+        if (idx + 1) % 50 == 0 or idx == 0 or (idx + 1) == total_samples:
+            elapsed = time.time() - eval_start_time
+            eta = elapsed / (idx + 1) * (total_samples - idx - 1) if idx > 0 else 0
+            print(f"\rEvaluating: {idx + 1}/{total_samples} ({100*(idx+1)/total_samples:.1f}%) ETA: {eta/60:.1f}min", end="", flush=True)
         # Move to device
         if isinstance(inputs, (list, tuple)):
             inputs = [x.to(device) for x in inputs]
@@ -256,6 +263,7 @@ def evaluate(model, dataloader, device, cfg, num_classes=19):
         # Update metrics
         metrics.update_batch(pred, target)
 
+    print()  # New line after progress bar
     results = metrics.get_results()
     return results, metrics
 

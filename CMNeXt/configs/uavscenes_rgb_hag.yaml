@@ -110,8 +110,8 @@ EVAL:
   # Small objects (traffic barrier, umbrella) would disappear
   MODE: 'slide'              # NOT 'whole' - preserve small objects
   STRIDE:
-    - 512
-    - 512                    # ~33% overlap for 768 window
+    - 768
+    - 768                    # No overlap for faster validation
   CROP_SIZE:
     - 768
     - 768                    # Window size
@@ -119,8 +119,8 @@ EVAL:
 TEST:
   MODE: 'slide'
   STRIDE:
-    - 512
-    - 512
+    - 768
+    - 768
   CROP_SIZE:
     - 768
     - 768
