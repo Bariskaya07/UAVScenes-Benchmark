@@ -136,7 +136,7 @@ def get_arguments():
         "--num-epoch",
         type=int,
         nargs="+",
-        default=[100, 100, 100],
+        default=[20, 20, 20],  # 60 total epochs (fair comparison with CMNeXt)
         help="Number of epochs per training stage",
     )
     parser.add_argument(
@@ -569,7 +569,8 @@ def main():
         iters_per_epoch = len(train_loader) if 'train_loader' in dir() else 500
         warmup_epochs = getattr(args, 'warmup_epochs', 3)
         warmup_iter = warmup_epochs * iters_per_epoch
-        max_iter = args.epochs_per_stage * args.num_stages * iters_per_epoch
+        total_epochs = sum(args.num_epoch)  # 60 epochs (3 stages × 20 epochs)
+        max_iter = total_epochs * iters_per_epoch
         power = getattr(args, 'power', 0.9)  # CMNeXt paper setting
         warmup_ratio = getattr(args, 'warmup_ratio', 0.1)  # CMNeXt paper setting
 
