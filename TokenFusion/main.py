@@ -268,8 +268,12 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
 
 
 @torch.no_grad()
-def validate(model, val_loader, cfg, device, logger):
-    """Validate model with sliding window inference."""
+def validate(model, val_loader, cfg, device, logger, eval_mode='whole'):
+    """Validate model.
+
+    Args:
+        eval_mode: 'whole' for fast validation (resize), 'slide' for accurate (sliding window)
+    """
     model.eval()
 
     confusion_matrix = ConfusionMatrix(
@@ -277,7 +281,8 @@ def validate(model, val_loader, cfg, device, logger):
         ignore_label=cfg.dataset.ignore_label
     )
 
-    logger.info("Running validation with sliding window inference...")
+    mode_str = "whole image" if eval_mode == 'whole' else "sliding window"
+    logger.info(f"Running validation with {mode_str} inference...")
     start_time = time.time()
 
     for i, sample in enumerate(val_loader):
@@ -285,14 +290,22 @@ def validate(model, val_loader, cfg, device, logger):
         hag = sample['hag'].to(device)
         label = sample['label']
 
-        # Sliding window inference
-        output = sliding_window_inference(
-            model, rgb, hag,
-            window_size=cfg.evaluation.slide_size,
-            stride=cfg.evaluation.slide_stride,
-            num_classes=cfg.dataset.num_classes,
-            device=device
-        )
+        if eval_mode == 'slide':
+            # Sliding window inference (accurate but slow)
+            output = sliding_window_inference(
+                model, rgb, hag,
+                window_size=cfg.evaluation.slide_size,
+                stride=cfg.evaluation.slide_stride,
+                num_classes=cfg.dataset.num_classes,
+                device=device
+            )
+        else:
+            # Whole image inference (fast but lower accuracy)
+            outputs, _ = model([rgb, hag])
+            # Use ensemble output (last one)
+            output = outputs[-1]
+            # Upsample to original label size
+            output = F.interpolate(output, size=label.shape[1:], mode='bilinear', align_corners=False)
 
         # Get predictions
         pred = output.argmax(dim=1).cpu()
@@ -374,9 +387,10 @@ def main():
         start_epoch = info['epoch']
         best_miou = info.get('best_miou', 0)
 
-    # Evaluation only
+    # Evaluation only (use slide mode for accurate final test)
     if args.eval_only:
-        metrics = validate(model, val_loader, cfg, device, logger)
+        eval_mode = getattr(cfg.evaluation, 'test_mode', 'slide')
+        metrics = validate(model, val_loader, cfg, device, logger, eval_mode=eval_mode)
         return
 
     # Training loop
@@ -393,9 +407,10 @@ def main():
             epoch + 1, device, scaler, logger
         )
 
-        # Validate
+        # Validate (use whole mode for fast validation during training)
         if (epoch + 1) % cfg.training.val_every == 0 or epoch == cfg.training.epochs - 1:
-            metrics = validate(model, val_loader, cfg, device, logger)
+            eval_mode = getattr(cfg.evaluation, 'val_mode', 'whole')
+            metrics = validate(model, val_loader, cfg, device, logger, eval_mode=eval_mode)
             current_miou = metrics['miou']
 
             # Save best model

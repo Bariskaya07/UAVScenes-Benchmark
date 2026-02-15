@@ -24,7 +24,17 @@ class SegEvaluator(Evaluator):
         label = data['label']
         modal_x = data['modal_x']
         name = data['fn']
-        pred = self.sliding_eval_rgbX(img, modal_x, config.eval_crop_size, config.eval_stride_rate, device)
+
+        # Check eval_mode from config (default to 'whole' for fast validation)
+        eval_mode = getattr(config, 'eval_mode', 'whole')
+
+        if eval_mode == 'slide':
+            # Sliding window evaluation (accurate but slow)
+            pred = self.sliding_eval_rgbX(img, modal_x, config.eval_crop_size, config.eval_stride_rate, device)
+        else:
+            # Whole image evaluation (fast but lower accuracy)
+            pred = self.whole_eval_rgbX(img, modal_x, label.shape, device)
+
         hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
         results_dict = {'hist': hist_tmp, 'labeled': labeled_tmp, 'correct': correct_tmp}
 

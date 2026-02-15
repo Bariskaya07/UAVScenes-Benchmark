@@ -429,6 +429,70 @@ class Evaluator(object):
         return p_img
 
     
+    # Whole image evaluation for RGB + X (fast but lower accuracy)
+    def whole_eval_rgbX(self, img, modal_x, output_size, device=None):
+        """Evaluate whole image at once (resize to model input size).
+
+        Args:
+            img: RGB image (H, W, 3)
+            modal_x: Modal X image (H, W) or (H, W, C)
+            output_size: Output size (H, W)
+            device: CUDA device
+
+        Returns:
+            pred: Prediction (H, W)
+        """
+        processed_pred = np.zeros((output_size[0], output_size[1], self.class_num))
+
+        for s in self.multi_scales:
+            # Resize to scale
+            scaled_img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+            if len(modal_x.shape) == 2:
+                scaled_modal_x = cv2.resize(modal_x, None, fx=s, fy=s, interpolation=cv2.INTER_NEAREST)
+            else:
+                scaled_modal_x = cv2.resize(modal_x, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+
+            # Process image
+            input_data, input_modal_x = self.process_image_rgbX_whole(scaled_img, scaled_modal_x)
+
+            # Forward pass
+            pred = self.val_func_process_rgbX(input_data, input_modal_x, device)
+            pred = pred.permute(1, 2, 0)
+
+            # Resize back to original size
+            processed_pred += cv2.resize(pred.cpu().numpy(),
+                                         (output_size[1], output_size[0]),
+                                         interpolation=cv2.INTER_LINEAR)
+
+        pred = processed_pred.argmax(2)
+        return pred
+
+    def process_image_rgbX_whole(self, img, modal_x):
+        """Process RGB and modal X images without padding (for whole image eval)."""
+        p_img = img
+        p_modal_x = modal_x
+
+        if img.shape[2] < 3:
+            im_b = p_img
+            im_g = p_img
+            im_r = p_img
+            p_img = np.concatenate((im_b, im_g, im_r), axis=2)
+
+        p_img = normalize(p_img, self.norm_mean, self.norm_std)
+        if len(modal_x.shape) == 2:
+            p_modal_x = normalize(p_modal_x, 0, 1)
+        else:
+            p_modal_x = normalize(p_modal_x, self.norm_mean, self.norm_std)
+
+        p_img = p_img.transpose(2, 0, 1)  # 3 H W
+
+        if len(modal_x.shape) == 2:
+            p_modal_x = p_modal_x[np.newaxis, ...]
+        else:
+            p_modal_x = p_modal_x.transpose(2, 0, 1)  # 3 H W
+
+        return p_img, p_modal_x
+
     # add new funtion for rgb and modal X segmentation
     def sliding_eval_rgbX(self, img, modal_x, crop_size, stride_rate, device=None):
         crop_size = to_2tuple(crop_size)
