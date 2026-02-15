@@ -269,6 +269,10 @@ class UAVScenes(Dataset):
         # Load 16-bit PNG
         hag_raw = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)  # uint16
 
+        # Error handling for missing/corrupted files
+        if hag_raw is None:
+            raise FileNotFoundError(f"HAG file could not be loaded: {filepath}")
+
         # Convert to meters
         hag_meters = (hag_raw.astype(np.float32) - 20000) / 1000.0
 
