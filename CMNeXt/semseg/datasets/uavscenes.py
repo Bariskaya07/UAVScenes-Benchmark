@@ -199,8 +199,8 @@ class UAVScenes(Dataset):
                 label_path = self.root / 'interval5_CAM_label' / 'interval5_CAM_label' / scene / 'interval5_CAM_label_id' / f'{timestamp}.png'
                 hag_path = self.root / 'interval5_HAG_CSF' / scene / f'{timestamp}.png'
 
-                # Only add if all files exist
-                if label_path.exists() and hag_path.exists():
+                # Only add if all files exist and HAG is not empty (0 bytes = corrupted)
+                if label_path.exists() and hag_path.exists() and hag_path.stat().st_size > 0:
                     samples.append({
                         'rgb': str(rgb_file),
                         'label': str(label_path),
