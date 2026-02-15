@@ -172,7 +172,7 @@ if __name__ == '__main__':
     with open(args.cfg) as f:
         cfg = yaml.load(f, Loader=yaml.SafeLoader)
 
-    fix_seeds(3407)
+    fix_seeds(42)  # Fair comparison with CMNeXt
     setup_cudnn()
     gpu = setup_ddp()
     modals = ''.join([m[0] for m in cfg['DATASET']['MODALS']])

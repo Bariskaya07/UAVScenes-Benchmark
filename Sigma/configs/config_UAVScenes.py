@@ -23,7 +23,7 @@ C = edict()
 config = C
 cfg = C
 
-C.seed = 3407
+C.seed = 42  # Fair comparison with CMNeXt/DFormerV2
 
 remoteip = os.popen('pwd').read()
 C.root_dir = os.path.abspath(os.path.join(os.getcwd(), './'))
