@@ -65,7 +65,9 @@ C.aux_rate = 0.0  # No auxiliary loss
 # EVALUATION CONFIGURATION
 # =============================================================================
 C.eval_iter = 5  # Evaluate every 5 epochs
-C.eval_stride_rate = 2 / 3  # ~33% overlap for sliding window
+C.eval_mode = 'whole'       # Fast validation during training (resize to 768x768)
+C.test_mode = 'slide'       # Accurate final test
+C.eval_stride_rate = 2 / 3  # ~33% overlap for sliding window (test mode)
 C.eval_scale_array = [1.0]  # Single-scale evaluation for speed
 C.eval_flip = True  # Flip augmentation during eval
 C.eval_crop_size = [768, 768]  # Sliding window size (height, width)

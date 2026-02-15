@@ -132,7 +132,9 @@ C.bn_momentum = 0.1
 # ==============================================================================
 # Evaluation Config
 # ==============================================================================
-C.eval_stride_rate = 2 / 3  # ~33% overlap for sliding window
+C.eval_mode = 'whole'       # Fast validation during training (resize to 768x768)
+C.test_mode = 'slide'       # Accurate final test
+C.eval_stride_rate = 2 / 3  # ~33% overlap for sliding window (test mode)
 C.eval_scale_array = [1]    # Single scale evaluation
 C.eval_flip = False
 C.eval_crop_size = [768, 768]  # [height, width]

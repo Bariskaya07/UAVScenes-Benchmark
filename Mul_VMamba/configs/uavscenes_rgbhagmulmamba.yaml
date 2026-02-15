@@ -76,22 +76,25 @@ SCHEDULER:
   WARMUP_RATIO  : 0.1             # CMNeXt paper setting
 
 # -------------------------------------------------------------------------
-# EVALUATION CONFIG (Sliding Window)
+# EVALUATION CONFIG (Validation during training - fast)
 # -------------------------------------------------------------------------
 EVAL:
   MODEL_PATH    : 'output/UAVScenes_MulVMamba/best.pth'
-  IMAGE_SIZE    : [768, 768]      # Sliding window size
+  IMAGE_SIZE    : [768, 768]
   BATCH_SIZE    : 1
+  MODE          : 'whole'         # Fast validation (resize to 768x768)
   MSF:
     ENABLE      : false
     FLIP        : true
     SCALES      : [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]
 
 # -------------------------------------------------------------------------
-# TEST CONFIG
+# TEST CONFIG (Final evaluation - accurate)
 # -------------------------------------------------------------------------
 TEST:
   MODEL_PATH    : 'output/UAVScenes_MulVMamba/best.pth'
   FILE          : 'data/UAVScenes'
   IMAGE_SIZE    : [768, 768]
   OVERLAY       : false
+  MODE          : 'slide'         # Accurate final test
+  STRIDE        : [512, 512]      # ~33% overlap for accuracy

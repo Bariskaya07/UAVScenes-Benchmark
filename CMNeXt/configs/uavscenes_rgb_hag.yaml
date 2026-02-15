@@ -105,22 +105,20 @@ EVAL:
     - 768                    # Sliding window size
   BATCH_SIZE: 1              # Safe for sliding window
 
-  # STRATEGY: SLIDING WINDOW (Full Resolution Inference)
-  # Why: UAVScenes 2448×2048 -> resize loses 79% pixels!
-  # Small objects (traffic barrier, umbrella) would disappear
-  MODE: 'slide'              # NOT 'whole' - preserve small objects
-  STRIDE:
-    - 768
-    - 768                    # No overlap for faster validation
+  # STRATEGY: WHOLE IMAGE (Fast validation during training)
+  # Validation uses 'whole' mode for speed, final test uses 'slide' for accuracy
+  MODE: 'whole'              # Fast validation (resize to 768x768)
   CROP_SIZE:
     - 768
     - 768                    # Window size
 
 TEST:
+  # STRATEGY: SLIDING WINDOW (Accurate final evaluation)
+  # Why: UAVScenes 2448×2048 -> resize loses 79% pixels!
   MODE: 'slide'
   STRIDE:
-    - 768
-    - 768
+    - 512
+    - 512                    # ~33% overlap for accuracy
   CROP_SIZE:
     - 768
     - 768
