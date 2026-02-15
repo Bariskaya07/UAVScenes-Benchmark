@@ -234,6 +234,8 @@ def evaluate(model, dataloader, device, cfg, num_classes=19):
     metrics = UAVScenesMetrics(num_classes=num_classes, ignore_label=255)
 
     eval_mode = cfg.get('EVAL', {}).get('MODE', 'whole')
+    print(f"\n[DEBUG] eval_mode = '{eval_mode}' (from cfg['EVAL']['MODE'])")
+    print(f"[DEBUG] cfg['EVAL'] = {cfg.get('EVAL', {})}")
     total_samples = len(dataloader)
     eval_start_time = time.time()
 
