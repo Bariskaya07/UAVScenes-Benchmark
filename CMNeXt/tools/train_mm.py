@@ -401,8 +401,10 @@ def main():
     # Create dataloaders
     print("\nCreating dataloaders...")
     train_loader = create_dataloader(cfg, split='train')
-    test_loader = create_dataloader(cfg, split='test')
+    val_loader = create_dataloader(cfg, split='val')      # For periodic evaluation during training
+    test_loader = create_dataloader(cfg, split='test')    # For final evaluation only
     print(f"Train: {len(train_loader.dataset)} samples, {len(train_loader)} batches")
+    print(f"Val: {len(val_loader.dataset)} samples, {len(val_loader)} batches")
     print(f"Test: {len(test_loader.dataset)} samples, {len(test_loader)} batches")
 
     # Create model
@@ -487,10 +489,10 @@ def main():
         print(f"Train Loss: {train_loss:.4f}")
         writer.add_scalar('Epoch/Train_Loss', train_loss, epoch)
 
-        # Evaluate
+        # Evaluate on VALIDATION set (not test set!)
         if epoch >= eval_start and (epoch - eval_start) % eval_interval == 0:
-            print("\nEvaluating...")
-            results, metrics = evaluate(model, test_loader, device, cfg,
+            print("\nEvaluating on validation set...")
+            results, metrics = evaluate(model, val_loader, device, cfg,
                                         num_classes=cfg['MODEL']['NUM_CLASSES'])
 
             miou = results['mIoU']
@@ -498,18 +500,18 @@ def main():
             dynamic_miou = results['dynamic_mIoU']
             pixel_acc = results['pixel_accuracy']
 
-            print(f"mIoU: {miou*100:.2f}% | Static: {static_miou*100:.2f}% | "
+            print(f"Val mIoU: {miou*100:.2f}% | Static: {static_miou*100:.2f}% | "
                   f"Dynamic: {dynamic_miou*100:.2f}% | Acc: {pixel_acc*100:.2f}%")
 
-            # TensorBoard
-            writer.add_scalar('Epoch/mIoU', miou, epoch)
-            writer.add_scalar('Epoch/Static_mIoU', static_miou, epoch)
-            writer.add_scalar('Epoch/Dynamic_mIoU', dynamic_miou, epoch)
-            writer.add_scalar('Epoch/Pixel_Accuracy', pixel_acc, epoch)
+            # TensorBoard (validation metrics)
+            writer.add_scalar('Val/mIoU', miou, epoch)
+            writer.add_scalar('Val/Static_mIoU', static_miou, epoch)
+            writer.add_scalar('Val/Dynamic_mIoU', dynamic_miou, epoch)
+            writer.add_scalar('Val/Pixel_Accuracy', pixel_acc, epoch)
 
-            # Per-class IoU
+            # Per-class IoU (validation)
             for i, iou in enumerate(results['per_class_iou']):
-                writer.add_scalar(f'Class_IoU/{UAVScenes.CLASSES[i]}', iou, epoch)
+                writer.add_scalar(f'Val_Class_IoU/{UAVScenes.CLASSES[i]}', iou, epoch)
 
             # Save checkpoint
             is_best = miou > best_miou
