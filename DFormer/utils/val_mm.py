@@ -423,7 +423,14 @@ def main(cfg):
                 "F1": f1 + [mf1],
                 "Acc": acc + [macc],
             }
-            print("mIoU : {}".format(miou))
+            print("mIoU : {:.2f}".format(miou))
+
+            # Print per-class IoU to console
+            print("\nPer-class IoU:")
+            for i, cls_name in enumerate(dataset.CLASSES):
+                marker = "[D]" if i >= 17 else "[S]"  # Dynamic: sedan(17), truck(18)
+                print(f"  {marker} {cls_name:<18} {ious[i]:>6.2f}%")
+            print()
             print("Results saved in {}".format(eval_cfg["MODEL_PATH"]))
 
         with open(eval_path, "a+") as f:

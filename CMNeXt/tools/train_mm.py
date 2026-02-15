@@ -503,6 +503,14 @@ def main():
             print(f"Val mIoU: {miou*100:.2f}% | Static: {static_miou*100:.2f}% | "
                   f"Dynamic: {dynamic_miou*100:.2f}% | Acc: {pixel_acc*100:.2f}%")
 
+            # Per-class IoU (compact format)
+            print("\nPer-class IoU:")
+            per_class_iou = results['per_class_iou']
+            for i, cls_name in enumerate(UAVScenes.CLASSES):
+                marker = "[D]" if i >= 17 else "[S]"  # Dynamic: sedan(17), truck(18)
+                print(f"  {marker} {cls_name:<18} {per_class_iou[i]*100:>6.2f}%")
+            print()
+
             # TensorBoard (validation metrics)
             writer.add_scalar('Val/mIoU', miou, epoch)
             writer.add_scalar('Val/Static_mIoU', static_miou, epoch)

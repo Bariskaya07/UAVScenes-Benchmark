@@ -22,6 +22,16 @@ def getScores(conf_matrix):
     return overall * 100., np.nanmean(perclass) * 100., np.nanmean(IU) * 100.
 
 
+def getPerClassIoU(conf_matrix):
+    """Get per-class IoU values."""
+    if conf_matrix.sum() == 0:
+        return np.zeros(conf_matrix.shape[0])
+    with np.errstate(divide='ignore', invalid='ignore'):
+        IU = np.diag(conf_matrix) / (conf_matrix.sum(1) + conf_matrix.sum(0) \
+            - np.diag(conf_matrix)).astype(np.float)
+    return IU * 100.  # Return as percentage
+
+
 def compute_params(model):
     """Compute number of parameters"""
     n_total_params = 0

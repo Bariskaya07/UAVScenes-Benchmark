@@ -16,7 +16,7 @@ from utils.val_mm import evaluate, evaluate_msf
 from models.builder import EncoderDecoder as segmodel
 from utils.dataloader.dataloader import get_train_loader, get_val_loader
 from utils.dataloader.RGBXDataset import RGBXDataset
-from utils.dataloader.UAVScenesDataset import UAVScenesDataset
+from utils.dataloader.UAVScenesDataset import UAVScenesDataset, CLASS_NAMES as UAVSCENES_CLASSES
 from utils.engine.engine import Engine
 from utils.engine.logger import get_logger
 from utils.init_func import configure_optimizers, group_weight
@@ -461,6 +461,13 @@ with Engine(custom_parser=parser) as engine:
                                 metric=miou,
                             )
                         print("miou", miou, "best", best_miou)
+                        # Print per-class IoU
+                        if config.dataset_name == 'UAVScenes':
+                            print("\nPer-class IoU:")
+                            for i, cls_name in enumerate(UAVSCENES_CLASSES):
+                                marker = "[D]" if i >= 17 else "[S]"
+                                print(f"  {marker} {cls_name:<18} {ious[i]:>6.2f}%")
+                            print()
             elif not engine.distributed:
                 with torch.no_grad():
                     model.eval()
@@ -524,6 +531,13 @@ with Engine(custom_parser=parser) as engine:
                         metric=miou,
                     )
                 print("miou", miou, "best", best_miou)
+                # Print per-class IoU
+                if config.dataset_name == 'UAVScenes':
+                    print("\nPer-class IoU:")
+                    for i, cls_name in enumerate(UAVSCENES_CLASSES):
+                        marker = "[D]" if i >= 17 else "[S]"
+                        print(f"  {marker} {cls_name:<18} {ious[i]:>6.2f}%")
+                    print()
             logger.info(f"Epoch {epoch} validation result: mIoU {miou}, best mIoU {best_miou}")
             eval_timer.stop()
 

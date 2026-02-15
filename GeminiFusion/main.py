@@ -467,6 +467,14 @@ def validate(
         latency = all_times / count
         print(f"all_times: {all_times}  count: {count}  latency: {latency}")
 
+    # UAVScenes class names
+    uavscenes_classes = [
+        "background", "roof", "dirt_road", "paved_road", "river", "pool",
+        "bridge", "container", "airstrip", "traffic_barrier", "green_field",
+        "wild_field", "solar_panel", "umbrella", "transparent_roof", "car_park",
+        "paved_walk", "sedan", "truck"
+    ]
+
     # Print results
     for idx, input_type in enumerate(input_types + ["ens"]):
         glob, mean, iou = getScores(conf_mat[idx])
@@ -479,6 +487,14 @@ def validate(
         print_log(
             f"Epoch {epoch:<4d} {input_type_str:<7s}   glob_acc={glob:<5.2f}    mean_acc={mean:<5.2f}    IoU={iou:<5.2f}        {best_iou_note}"
         )
+
+        # Print per-class IoU for ensemble (final) output
+        if input_type == "ens":
+            per_class_iou = getPerClassIoU(conf_mat[idx])
+            print_log("\nPer-class IoU:")
+            for i, cls_name in enumerate(uavscenes_classes):
+                marker = "[D]" if i >= 17 else "[S]"
+                print_log(f"  {marker} {cls_name:<18} {per_class_iou[i]:>6.2f}%")
 
     print_log("")
     return iou
