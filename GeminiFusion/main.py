@@ -565,6 +565,14 @@ def main():
 
     # Training loop
     for task_idx in range(args.num_stages):
+        # Calculate warmup_iter from epochs (fair comparison with CMNeXt)
+        iters_per_epoch = len(train_loader) if 'train_loader' in dir() else 500
+        warmup_epochs = getattr(args, 'warmup_epochs', 3)
+        warmup_iter = warmup_epochs * iters_per_epoch
+        max_iter = args.epochs_per_stage * args.num_stages * iters_per_epoch
+        power = getattr(args, 'power', 0.9)  # CMNeXt paper setting
+        warmup_ratio = getattr(args, 'warmup_ratio', 0.1)  # CMNeXt paper setting
+
         optimizer = PolyWarmupAdamW(
             params=[
                 {
@@ -586,10 +594,10 @@ def main():
             lr=lrs[task_idx],
             weight_decay=args.weight_decay,
             betas=[0.9, 0.999],
-            warmup_iter=1500,
-            max_iter=40000,
-            warmup_ratio=1e-6,
-            power=1.0,
+            warmup_iter=warmup_iter,
+            max_iter=max_iter,
+            warmup_ratio=warmup_ratio,
+            power=power,
         )
 
         total_epoch = sum([args.num_epoch[idx] for idx in range(task_idx + 1)])

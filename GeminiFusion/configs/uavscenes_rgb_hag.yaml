@@ -38,12 +38,12 @@ optimizer:
   betas: [0.9, 0.999]
   weight_decay: 0.01
 
-# Scheduler (NOTE: warmup_iter, power are hardcoded in main.py)
-# Actual values in main.py: warmup_iter=1500, power=1.0
+# Scheduler (Fair comparison with CMNeXt)
 scheduler:
   max_epochs: 60
-  warmup_iter: 1500    # Hardcoded in main.py
-  power: 1.0           # Hardcoded in main.py (NOT 0.9)
+  warmup_epochs: 3     # ~5% of total epochs
+  warmup_ratio: 0.1    # CMNeXt paper setting
+  power: 0.9           # CMNeXt paper setting
 
 # Training schedule
 num_stages: 3
