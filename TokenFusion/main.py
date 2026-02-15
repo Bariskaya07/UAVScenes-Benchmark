@@ -100,7 +100,14 @@ def build_dataloaders(cfg):
 
     val_dataset = UAVScenesDataset(
         data_root=cfg.dataset.data_path,
-        split='test',
+        split='val',  # Use validation set during training (not test!)
+        transform=val_transform,
+        hag_max_height=cfg.hag.max_meters
+    )
+
+    test_dataset = UAVScenesDataset(
+        data_root=cfg.dataset.data_path,
+        split='test',  # Test set only for final evaluation
         transform=val_transform,
         hag_max_height=cfg.hag.max_meters
     )
@@ -123,7 +130,15 @@ def build_dataloaders(cfg):
         pin_memory=True
     )
 
-    return train_loader, val_loader
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=1,  # Use batch size 1 for sliding window inference
+        shuffle=False,
+        num_workers=cfg.training.num_workers,
+        pin_memory=True
+    )
+
+    return train_loader, val_loader, test_loader
 
 
 def build_model(cfg, device):
@@ -327,9 +342,10 @@ def main():
     logger.info(f"Model parameters: {count_parameters(model) / 1e6:.2f}M")
 
     # Build dataloaders
-    train_loader, val_loader = build_dataloaders(cfg)
+    train_loader, val_loader, test_loader = build_dataloaders(cfg)
     logger.info(f"Train samples: {len(train_loader.dataset)}")
     logger.info(f"Val samples: {len(val_loader.dataset)}")
+    logger.info(f"Test samples: {len(test_loader.dataset)}")
 
     # Calculate max iterations
     iters_per_epoch = len(train_loader)

@@ -261,12 +261,19 @@ def create_uavscenes_loaders(args, input_scale):
 
     validset = UAVScenesDataset(
         data_root=args.train_dir,
-        split='test',
+        split='val',  # Use validation set during training (not test!)
         transform=composed_val,
         hag_max_height=args.hag_max_height,
     )
 
-    print_log(f"Created train set {len(trainset)} examples, val set {len(validset)} examples")
+    testset = UAVScenesDataset(
+        data_root=args.train_dir,
+        split='test',  # Test set only for final evaluation
+        transform=composed_val,
+        hag_max_height=args.hag_max_height,
+    )
+
+    print_log(f"Created train set {len(trainset)} examples, val set {len(validset)} examples, test set {len(testset)} examples")
 
     # Create samplers
     if dist.is_initialized():
@@ -295,7 +302,15 @@ def create_uavscenes_loaders(args, input_scale):
         pin_memory=True,
     )
 
-    return train_loader, val_loader, train_sampler
+    test_loader = DataLoader(
+        testset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+
+    return train_loader, val_loader, test_loader, train_sampler
 
 
 def load_ckpt(ckpt_path, ckpt_dict, is_pretrain_finetune=False):
@@ -610,7 +625,7 @@ def main():
 
         # Create data loaders
         if args.dataset == "uavscenes":
-            train_loader, val_loader, train_sampler = create_uavscenes_loaders(
+            train_loader, val_loader, test_loader, train_sampler = create_uavscenes_loaders(
                 args, input_scale
             )
         else:
