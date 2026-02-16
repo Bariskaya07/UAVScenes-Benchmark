@@ -62,12 +62,11 @@ def sliding_predict(model, image, num_classes, flip=True):
     return total_predictions.unsqueeze(0)
 
 @torch.no_grad()
-def evaluate(model, dataloader, device, eval_size=(768, 768)):
-    print('Evaluating...')
+def evaluate(model, dataloader, device, eval_size=(768, 768), sliding=False):
+    print(f'Evaluating... (mode: {"slide" if sliding else "whole"})')
     model.eval()
     n_classes = dataloader.dataset.n_classes
     metrics = Metrics(n_classes, dataloader.dataset.ignore_label, device)
-    sliding = False
     for images, labels in tqdm(dataloader):
         images = [x.to(device) for x in images]
         labels = labels.to(device)

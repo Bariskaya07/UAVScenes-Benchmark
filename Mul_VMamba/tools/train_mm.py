@@ -128,7 +128,11 @@ def main(cfg, gpu, save_dir):
 
         if ((epoch+1) % train_cfg['EVAL_INTERVAL'] == 0 and (epoch+1)>train_cfg['EVAL_START']) or (epoch+1) == epochs:
             if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
-                acc, macc, _, _, ious, miou = evaluate(model, valloader, device)
+                # Get eval mode from config (default: whole for fast validation)
+                eval_mode = eval_cfg.get('MODE', 'whole')
+                sliding = (eval_mode == 'slide')
+                eval_size = tuple(eval_cfg.get('IMAGE_SIZE', [768, 768]))
+                acc, macc, _, _, ious, miou = evaluate(model, valloader, device, eval_size=eval_size, sliding=sliding)
                 writer.add_scalar('val/mIoU', miou, epoch)
 
                 if miou > best_mIoU:

@@ -36,7 +36,8 @@ parser.add_argument("--show_image", "-s", default=False, action="store_true")
 parser.add_argument("--save_path", default=None)
 parser.add_argument("--checkpoint_dir")
 parser.add_argument("--continue_fpath")
-parser.add_argument("--sliding", default=False, action=argparse.BooleanOptionalAction)
+parser.add_argument("--sliding", default=None, action=argparse.BooleanOptionalAction,
+                    help="Override eval_mode from config. If not set, reads config.eval_mode")
 parser.add_argument("--compile", default=False, action=argparse.BooleanOptionalAction)
 parser.add_argument("--compile_mode", default="default")
 parser.add_argument("--syncbn", default=True, action=argparse.BooleanOptionalAction)
@@ -122,6 +123,13 @@ with Engine(custom_parser=parser) as engine:
     if (not args.pad_SUNRGBD) and config.backbone.startswith("DFormerv2") and config.dataset_name == "SUNRGBD":
         raise ValueError("DFormerv2 is not recommended without pad_SUNRGBD")
     config.pad = args.pad_SUNRGBD
+
+    # Set sliding mode from config if not specified via CLI
+    if args.sliding is None:
+        eval_mode = getattr(config, 'eval_mode', 'whole')
+        args.sliding = (eval_mode == 'slide')
+        logger.info(f"Using eval_mode='{eval_mode}' from config (sliding={args.sliding})")
+
     if args.use_seed:
         set_seed(config.seed)
         logger.info(f"set seed {config.seed}")
