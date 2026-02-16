@@ -63,9 +63,9 @@ TRAIN:
   DDP: false                 # Single GPU mode
   WORKERS: 8                 # Data loading workers
 
-  # Early Stopping - Prevent unnecessary training
+  # Early Stopping - Disabled because whole mode validation underestimates small objects
   EARLY_STOP:
-    ENABLE: true
+    ENABLE: false            # Disabled - let training run full 60 epochs
     PATIENCE: 3              # 3 evaluations = 15 epochs (3×5)
     MIN_DELTA: 0.001         # Minimum improvement threshold (0.1% mIoU)
     METRIC: 'mIoU'           # Metric to monitor
