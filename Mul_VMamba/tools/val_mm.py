@@ -62,7 +62,7 @@ def sliding_predict(model, image, num_classes, flip=True):
     return total_predictions.unsqueeze(0)
 
 @torch.no_grad()
-def evaluate(model, dataloader, device):
+def evaluate(model, dataloader, device, eval_size=(768, 768)):
     print('Evaluating...')
     model.eval()
     n_classes = dataloader.dataset.n_classes
@@ -74,7 +74,12 @@ def evaluate(model, dataloader, device):
         if sliding:
             preds = sliding_predict(model, images, num_classes=n_classes).softmax(dim=1)
         else:
-            preds = model(images).softmax(dim=1)
+            # Whole image inference - resize to training size for speed
+            orig_size = labels.shape[1:]  # (H, W)
+            images_resized = [F.interpolate(x, size=eval_size, mode='bilinear', align_corners=False) for x in images]
+            preds = model(images_resized).softmax(dim=1)
+            # Upsample back to original size
+            preds = F.interpolate(preds, size=orig_size, mode='bilinear', align_corners=False)
         metrics.update(preds, labels)
     
     ious, miou = metrics.compute_iou()

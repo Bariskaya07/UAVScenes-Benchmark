@@ -444,25 +444,31 @@ class Evaluator(object):
         """
         processed_pred = np.zeros((output_size[0], output_size[1], self.class_num))
 
-        for s in self.multi_scales:
-            # Resize to scale
-            scaled_img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
-            if len(modal_x.shape) == 2:
-                scaled_modal_x = cv2.resize(modal_x, None, fx=s, fy=s, interpolation=cv2.INTER_NEAREST)
-            else:
-                scaled_modal_x = cv2.resize(modal_x, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+        # Get target size from config (training size for fast inference)
+        if self.config is not None:
+            target_h = getattr(self.config, 'image_height', 768)
+            target_w = getattr(self.config, 'image_width', 768)
+        else:
+            target_h, target_w = 768, 768
 
-            # Process image
-            input_data, input_modal_x = self.process_image_rgbX_whole(scaled_img, scaled_modal_x)
+        # Resize to fixed target size (not scale factor)
+        scaled_img = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+        if len(modal_x.shape) == 2:
+            scaled_modal_x = cv2.resize(modal_x, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            scaled_modal_x = cv2.resize(modal_x, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-            # Forward pass
-            pred = self.val_func_process_rgbX(input_data, input_modal_x, device)
-            pred = pred.permute(1, 2, 0)
+        # Process image
+        input_data, input_modal_x = self.process_image_rgbX_whole(scaled_img, scaled_modal_x)
 
-            # Resize back to original size
-            processed_pred += cv2.resize(pred.cpu().numpy(),
-                                         (output_size[1], output_size[0]),
-                                         interpolation=cv2.INTER_LINEAR)
+        # Forward pass
+        pred = self.val_func_process_rgbX(input_data, input_modal_x, device)
+        pred = pred.permute(1, 2, 0)
+
+        # Resize back to original size
+        processed_pred += cv2.resize(pred.cpu().numpy(),
+                                     (output_size[1], output_size[0]),
+                                     interpolation=cv2.INTER_LINEAR)
 
         pred = processed_pred.argmax(2)
         return pred

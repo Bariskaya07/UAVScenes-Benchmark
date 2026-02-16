@@ -104,7 +104,18 @@ def evaluate(model, dataloader, config, device, engine, save_dir=None, sliding=F
         if sliding:
             preds = slide_inference(model, images, modal_xs, config).softmax(dim=1)
         else:
-            preds = model(images[0], images[1]).softmax(dim=1)
+            # Whole image inference - resize to training size for speed
+            orig_size = labels.shape[1:]  # (H, W)
+            eval_size = (config.image_height, config.image_width)
+
+            images_resized = [
+                F.interpolate(images[0], size=eval_size, mode='bilinear', align_corners=False),
+                F.interpolate(images[1], size=eval_size, mode='bilinear', align_corners=False)
+            ]
+
+            preds = model(images_resized[0], images_resized[1]).softmax(dim=1)
+            # Upsample back to original size
+            preds = F.interpolate(preds, size=orig_size, mode='bilinear', align_corners=False)
         # print(preds.shape,labels.shape)
         B, H, W = labels.shape
         metrics.update(preds, labels)
