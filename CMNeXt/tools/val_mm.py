@@ -39,6 +39,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='CMNeXt Validation')
     parser.add_argument('--cfg', type=str, required=True, help='Config file path')
     parser.add_argument('--checkpoint', type=str, default=None, help='Checkpoint path')
+    parser.add_argument('--split', type=str, default='test', choices=['val', 'test'], help='Dataset split to evaluate')
     parser.add_argument('--save-vis', action='store_true', help='Save visualization')
     parser.add_argument('--vis-dir', type=str, default='output/vis', help='Visualization output dir')
     return parser.parse_args()
@@ -51,14 +52,14 @@ def load_config(cfg_path):
     return cfg
 
 
-def create_dataloader(cfg):
-    """Create test DataLoader."""
+def create_dataloader(cfg, split='test'):
+    """Create DataLoader for evaluation."""
     dataset_cfg = cfg['DATASET']
     transform = get_test_transform(cfg)
 
     dataset = UAVScenes(
         root=dataset_cfg['ROOT'],
-        split='test',
+        split=split,
         transform=transform,
         modals=dataset_cfg['MODALS']
     )
@@ -255,9 +256,9 @@ def main():
             raise ValueError("No checkpoint specified and no best.pth found")
 
     # Create dataloader
-    print("\nCreating dataloader...")
-    dataloader, dataset = create_dataloader(cfg)
-    print(f"Test set: {len(dataset)} samples")
+    print(f"\nCreating dataloader for '{args.split}' split...")
+    dataloader, dataset = create_dataloader(cfg, split=args.split)
+    print(f"{args.split.capitalize()} set: {len(dataset)} samples")
 
     # Create model
     print("\nLoading model...")
