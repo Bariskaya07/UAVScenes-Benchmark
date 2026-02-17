@@ -187,10 +187,9 @@ def save_visualization(rgb, pred, target, save_path, dataset):
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, dataset, device, cfg, save_vis=False, vis_dir=None):
+def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vis=False, vis_dir=None):
     """Evaluate model."""
     metrics = UAVScenesMetrics(num_classes=cfg['MODEL']['NUM_CLASSES'], ignore_label=255)
-    eval_mode = cfg.get('EVAL', {}).get('MODE', 'slide')
 
     if save_vis and vis_dir:
         vis_dir = Path(vis_dir)
@@ -264,12 +263,18 @@ def main():
     print("\nLoading model...")
     model = create_model(cfg, checkpoint_path, device)
 
+    # Determine eval mode based on split
+    if args.split == 'test':
+        eval_mode = cfg.get('TEST', {}).get('MODE', 'slide')
+    else:
+        eval_mode = cfg.get('EVAL', {}).get('MODE', 'whole')
+
     # Evaluate
     print("\nEvaluating...")
-    print(f"Mode: {cfg.get('EVAL', {}).get('MODE', 'slide')}")
+    print(f"Mode: {eval_mode} (from cfg['{args.split.upper()}']['MODE'])")
 
     metrics, avg_time, fps = evaluate(
-        model, dataloader, dataset, device, cfg,
+        model, dataloader, dataset, device, cfg, eval_mode=eval_mode,
         save_vis=args.save_vis, vis_dir=args.vis_dir
     )
 

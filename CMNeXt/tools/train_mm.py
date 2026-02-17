@@ -228,14 +228,16 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, device, cfg, num_classes=19):
+def evaluate(model, dataloader, device, cfg, num_classes=19, eval_mode=None, config_key='EVAL'):
     """Evaluate model on test set."""
     model.eval()
     metrics = UAVScenesMetrics(num_classes=num_classes, ignore_label=255)
 
-    eval_mode = cfg.get('EVAL', {}).get('MODE', 'whole')
-    print(f"\n[DEBUG] eval_mode = '{eval_mode}' (from cfg['EVAL']['MODE'])")
-    print(f"[DEBUG] cfg['EVAL'] = {cfg.get('EVAL', {})}")
+    # Use provided eval_mode or read from config
+    if eval_mode is None:
+        eval_mode = cfg.get(config_key, {}).get('MODE', 'whole')
+    print(f"\n[DEBUG] eval_mode = '{eval_mode}' (from cfg['{config_key}']['MODE'])")
+    print(f"[DEBUG] cfg['{config_key}'] = {cfg.get(config_key, {})}")
     total_samples = len(dataloader)
     eval_start_time = time.time()
 
@@ -570,8 +572,10 @@ def main():
         print(f"\nLoaded best model from epoch {checkpoint['epoch']+1}")
 
     print("\nFinal evaluation on test set:")
+    test_mode = cfg.get('TEST', {}).get('MODE', 'slide')
     results, metrics = evaluate(model, test_loader, device, cfg,
-                                num_classes=cfg['MODEL']['NUM_CLASSES'])
+                                num_classes=cfg['MODEL']['NUM_CLASSES'],
+                                eval_mode=test_mode, config_key='TEST')
     metrics.print_results()
 
     writer.close()
