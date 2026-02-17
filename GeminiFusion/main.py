@@ -39,6 +39,12 @@ from tqdm import tqdm
 from utils.augmentations_mm import *
 from torch.nn.parallel import DistributedDataParallel as DDP
 
+try:
+    from fvcore.nn import FlopCountAnalysis
+    FVCORE_AVAILABLE = True
+except ImportError:
+    FVCORE_AVAILABLE = False
+
 from datasets.uavscenes import UAVScenesDataset
 
 
@@ -639,9 +645,23 @@ def main():
         args.drop_rate,
     )
 
-    print_log(
-        f"Loaded Segmenter {args.backbone}, #PARAMS={compute_params(segmenter) / 1e6:3.2f}M"
-    )
+    total_params = compute_params(segmenter)
+    trainable_params = sum(p.numel() for p in segmenter.parameters() if p.requires_grad)
+    print_log(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable")
+
+    # Calculate FLOPs
+    if FVCORE_AVAILABLE:
+        try:
+            dummy_rgb = torch.zeros(1, 3, 768, 768).cuda()
+            dummy_hag = torch.zeros(1, 3, 768, 768).cuda()
+            segmenter.eval()
+            flops = FlopCountAnalysis(segmenter, (dummy_rgb, dummy_hag))
+            print_log(f"FLOPs: {flops.total() / 1e9:.2f}G")
+            segmenter.train()
+        except Exception as e:
+            print_log(f"Could not calculate FLOPs: {e}")
+    else:
+        print_log("FLOPs: fvcore not installed (pip install fvcore)")
 
     # Resume from checkpoint
     best_val, epoch_start = 0, 0

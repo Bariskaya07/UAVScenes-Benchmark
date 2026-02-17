@@ -25,6 +25,12 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
 
+try:
+    from fvcore.nn import FlopCountAnalysis
+    FVCORE_AVAILABLE = True
+except ImportError:
+    FVCORE_AVAILABLE = False
+
 # Local imports
 from models import WeTr
 from datasets import UAVScenesDataset
@@ -359,7 +365,23 @@ def main():
 
     # Build model
     model = build_model(cfg, device)
-    logger.info(f"Model parameters: {count_parameters(model) / 1e6:.2f}M")
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable")
+
+    # Calculate FLOPs
+    if FVCORE_AVAILABLE:
+        try:
+            dummy_rgb = torch.zeros(1, 3, 768, 768).to(device)
+            dummy_hag = torch.zeros(1, 3, 768, 768).to(device)
+            model.eval()
+            flops = FlopCountAnalysis(model, (dummy_rgb, dummy_hag))
+            logger.info(f"FLOPs: {flops.total() / 1e9:.2f}G")
+            model.train()
+        except Exception as e:
+            logger.info(f"Could not calculate FLOPs: {e}")
+    else:
+        logger.info("FLOPs: fvcore not installed (pip install fvcore)")
 
     # Build dataloaders
     train_loader, val_loader, test_loader = build_dataloaders(cfg)

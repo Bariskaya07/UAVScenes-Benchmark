@@ -11,6 +11,12 @@ import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
 
+try:
+    from fvcore.nn import FlopCountAnalysis
+    FVCORE_AVAILABLE = True
+except ImportError:
+    FVCORE_AVAILABLE = False
+
 from dataloader.dataloader import get_train_loader
 from models.builder import EncoderDecoder as segmodel
 from dataloader.RGBXDataset import RGBXDataset
@@ -87,7 +93,25 @@ with Engine(custom_parser=parser) as engine:
         BatchNorm2d = nn.BatchNorm2d
     
     model=segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
-    
+
+    # Count parameters and FLOPs
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable")
+
+    if FVCORE_AVAILABLE:
+        try:
+            dummy_rgb = torch.zeros(1, 3, 768, 768)
+            dummy_modal = torch.zeros(1, 3, 768, 768)
+            model.eval()
+            flops = FlopCountAnalysis(model, (dummy_rgb, dummy_modal))
+            logger.info(f"FLOPs: {flops.total() / 1e9:.2f}G")
+            model.train()
+        except Exception as e:
+            logger.info(f"Could not calculate FLOPs: {e}")
+    else:
+        logger.info("FLOPs: fvcore not installed (pip install fvcore)")
+
     # group weight and config optimizer
     base_lr = config.lr
     if engine.distributed:

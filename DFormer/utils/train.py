@@ -10,6 +10,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
+
+try:
+    from fvcore.nn import FlopCountAnalysis
+    FVCORE_AVAILABLE = True
+except ImportError:
+    FVCORE_AVAILABLE = False
 from torch.nn.parallel import DistributedDataParallel
 from utils.val_mm import evaluate, evaluate_msf
 
@@ -208,12 +214,24 @@ with Engine(custom_parser=parser) as engine:
         norm_layer=BatchNorm2d,
         syncbn=args.syncbn,
     )
-    # weight=torch.load('checkpoints/NYUv2_DFormer_Large.pth')['model']
-    # w_list=list(weight.keys())
-    # # for k in w_list:
-    # #     weight[k[7:]] = weight[k]
-    # print('load model')
-    # model.load_state_dict(weight)
+
+    # Count parameters and FLOPs
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable")
+
+    if FVCORE_AVAILABLE:
+        try:
+            dummy_rgb = torch.zeros(1, 3, 768, 768)
+            dummy_modal = torch.zeros(1, 3, 768, 768)
+            model.eval()
+            flops = FlopCountAnalysis(model, (dummy_rgb, dummy_modal))
+            logger.info(f"FLOPs: {flops.total() / 1e9:.2f}G")
+            model.train()
+        except Exception as e:
+            logger.info(f"Could not calculate FLOPs: {e}")
+    else:
+        logger.info("FLOPs: fvcore not installed (pip install fvcore)")
 
     base_lr = config.lr
     if engine.distributed:

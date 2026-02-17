@@ -30,6 +30,12 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 
+try:
+    from fvcore.nn import FlopCountAnalysis, flop_count_table
+    FVCORE_AVAILABLE = True
+except ImportError:
+    FVCORE_AVAILABLE = False
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -442,6 +448,18 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable")
+
+    # Calculate FLOPs
+    if FVCORE_AVAILABLE:
+        try:
+            num_modals = len(cfg['DATASET'].get('MODALS', ['rgb', 'hag']))
+            dummy_input = [torch.zeros(1, 3, 768, 768).to(device) for _ in range(num_modals)]
+            flops = FlopCountAnalysis(model, dummy_input)
+            print(f"FLOPs: {flops.total() / 1e9:.2f}G")
+        except Exception as e:
+            print(f"Could not calculate FLOPs: {e}")
+    else:
+        print("FLOPs: fvcore not installed (pip install fvcore)")
 
     # Create loss, optimizer, scheduler
     criterion = get_loss(cfg)

@@ -84,7 +84,15 @@ def main(cfg, gpu, save_dir):
     if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
         writer = SummaryWriter(str(save_dir))
         logger.info('================== model complexity =====================')
-        # cal_flops(model, dataset_cfg['MODALS'], logger)
+        # Count parameters
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable")
+        # Calculate FLOPs
+        try:
+            cal_flops(model, dataset_cfg['MODALS'], logger)
+        except Exception as e:
+            logger.info(f"Could not calculate FLOPs: {e}")
         logger.info('================== model structure =====================')
         logger.info(model)
         logger.info('================== training config =====================')
