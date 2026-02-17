@@ -198,19 +198,43 @@ def main(cfg, gpu, save_dir):
         test_metrics = UAVScenesMetrics(num_classes=testset.n_classes, ignore_label=testset.ignore_label)
 
         logger.info(f"Evaluating with SLIDE mode...")
+        import time
+        total_time = 0
+        num_images = 0
+
         for images, labels in tqdm(testloader, desc="Test evaluation"):
             images = [x.to(device) for x in images]
             labels = labels.numpy()
 
-            # Sliding window inference
+            # Sliding window inference with timing
+            torch.cuda.synchronize()
+            start_time = time.time()
+
             from val_mm import sliding_predict
             preds = sliding_predict(model, images, num_classes=testset.n_classes)
-            preds = preds.argmax(dim=1).cpu().numpy()
 
+            torch.cuda.synchronize()
+            total_time += time.time() - start_time
+            num_images += labels.shape[0]
+
+            preds = preds.argmax(dim=1).cpu().numpy()
             test_metrics.update(preds, labels)
+
+        # Calculate inference speed
+        avg_time_ms = (total_time / num_images) * 1000
+        fps = num_images / total_time
 
         # Print detailed results
         test_metrics.print_results(logger)
+
+        # Print and save inference speed
+        logger.info(f"\nInference speed:")
+        logger.info(f"  Average time per image: {avg_time_ms:.1f}ms")
+        logger.info(f"  FPS: {fps:.2f}")
+
+        # Save results to file
+        results_dir = os.path.join(save_dir, 'results')
+        test_metrics.save_results(results_dir, 'Mul_VMamba', avg_time_ms, fps, num_images, logger)
 
 
 if __name__ == '__main__':

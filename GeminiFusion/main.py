@@ -809,15 +809,26 @@ def main():
     test_metrics = UAVScenesMetrics(num_classes=args.num_classes, ignore_label=255)
 
     print_log("Running test evaluation with sliding window inference...")
+    import time
+    total_time = 0
+    num_images = 0
+
     with torch.no_grad():
         for i, sample in enumerate(test_loader):
             inputs = [sample[key].float().cuda() for key in args.input]
             target = sample["mask"]
 
-            # Sliding window inference
+            # Sliding window inference with timing
+            torch.cuda.synchronize()
+            start_time = time.time()
+
             ensemble_output = sliding_window_inference(
                 no_ddp_segmenter, inputs, args.num_classes, window_size=768, stride=512
             )
+
+            torch.cuda.synchronize()
+            total_time += time.time() - start_time
+            num_images += 1
 
             pred = ensemble_output.argmax(dim=1).cpu().numpy()
             gt = target[0].data.cpu().numpy()
@@ -827,8 +838,21 @@ def main():
             if (i + 1) % 50 == 0:
                 print_log(f'Test: {i + 1}/{len(test_loader)} samples')
 
+    # Calculate inference speed
+    avg_time_ms = (total_time / num_images) * 1000
+    fps = num_images / total_time
+
     # Print detailed results
     test_metrics.print_results()
+
+    # Print and save inference speed
+    print_log(f"\nInference speed:")
+    print_log(f"  Average time per image: {avg_time_ms:.1f}ms")
+    print_log(f"  FPS: {fps:.2f}")
+
+    # Save results to file
+    results_dir = os.path.join(args.output_dir, 'results')
+    test_metrics.save_results(results_dir, 'GeminiFusion', avg_time_ms, fps, num_images)
 
     helpers.logger.close()
     cleanup_ddp()

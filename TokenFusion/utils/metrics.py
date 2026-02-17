@@ -11,6 +11,10 @@ Implements:
 
 import numpy as np
 import torch
+import json
+import os
+from datetime import datetime
+from typing import Optional
 
 
 class ConfusionMatrix:
@@ -308,6 +312,81 @@ class UAVScenesMetrics:
                 log(f"  {self.class_names[true_cls]:<18} -> {self.class_names[pred_cls]:<18}: {count:>12,} pixels")
 
         log("=" * 100 + "\n")
+
+    def save_results(self, save_dir: str, model_name: str,
+                     inference_time_ms: Optional[float] = None,
+                     fps: Optional[float] = None,
+                     num_images: Optional[int] = None,
+                     logger=None):
+        """Save results to JSON and text files."""
+        os.makedirs(save_dir, exist_ok=True)
+        results = self.get_results()
+        support = self.confusion_matrix.sum(axis=1)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        json_results = {
+            'model': model_name, 'timestamp': timestamp,
+            'metrics': {
+                'mIoU': float(results['mIoU'] * 100),
+                'static_mIoU': float(results['static_mIoU'] * 100),
+                'dynamic_mIoU': float(results['dynamic_mIoU'] * 100),
+                'pixel_accuracy': float(results['pixel_accuracy'] * 100),
+                'mean_precision': float(results['mean_precision'] * 100),
+                'mean_recall': float(results['mean_recall'] * 100),
+                'mean_f1': float(results['mean_f1'] * 100),
+            },
+            'per_class': {}, 'inference': {}
+        }
+
+        if inference_time_ms is not None:
+            json_results['inference']['time_per_image_ms'] = round(inference_time_ms, 2)
+        if fps is not None:
+            json_results['inference']['fps'] = round(fps, 2)
+        if num_images is not None:
+            json_results['inference']['num_images'] = num_images
+
+        for i, cls_name in enumerate(self.class_names):
+            json_results['per_class'][cls_name] = {
+                'iou': float(results['per_class_iou'][i] * 100),
+                'precision': float(results['per_class_precision'][i] * 100),
+                'recall': float(results['per_class_recall'][i] * 100),
+                'f1': float(results['per_class_f1'][i] * 100),
+                'accuracy': float(results['per_class_accuracy'][i] * 100),
+                'support': int(support[i]),
+                'type': 'dynamic' if i in self.DYNAMIC_CLASSES else 'static'
+            }
+
+        json_path = os.path.join(save_dir, f'{model_name}_results.json')
+        with open(json_path, 'w') as f:
+            json.dump(json_results, f, indent=2)
+
+        txt_path = os.path.join(save_dir, f'{model_name}_results.txt')
+        with open(txt_path, 'w') as f:
+            f.write(f"{'='*100}\nUAVScenes Benchmark Results - {model_name}\nTimestamp: {timestamp}\n{'='*100}\n\n")
+            f.write(f"SUMMARY\n{'-'*50}\n")
+            f.write(f"mIoU:           {results['mIoU']*100:>7.2f}%\n")
+            f.write(f"Static mIoU:    {results['static_mIoU']*100:>7.2f}%  (17 classes)\n")
+            f.write(f"Dynamic mIoU:   {results['dynamic_mIoU']*100:>7.2f}%  (2 classes)\n")
+            f.write(f"Pixel Accuracy: {results['pixel_accuracy']*100:>7.2f}%\n")
+            f.write(f"Mean F1:        {results['mean_f1']*100:>7.2f}%\n")
+            if inference_time_ms is not None:
+                f.write(f"\nINFERENCE SPEED\n{'-'*50}\n")
+                if num_images: f.write(f"Test Images:    {num_images}\n")
+                f.write(f"Time/Image:     {inference_time_ms:.2f} ms\n")
+                if fps: f.write(f"FPS:            {fps:.2f}\n")
+            f.write(f"\nPER-CLASS RESULTS\n{'='*100}\n")
+            f.write(f"{'Class':<20} {'IoU':>8} {'Prec':>8} {'Recall':>8} {'F1':>8} {'Support':>12}\n{'-'*100}\n")
+            for i, cls_name in enumerate(self.class_names):
+                if support[i] > 0:
+                    t = "[D]" if i in self.DYNAMIC_CLASSES else "[S]"
+                    f.write(f"  {t} {cls_name:<15} {results['per_class_iou'][i]*100:>7.2f}% "
+                           f"{results['per_class_precision'][i]*100:>7.2f}% {results['per_class_recall'][i]*100:>7.2f}% "
+                           f"{results['per_class_f1'][i]*100:>7.2f}% {support[i]:>11,}\n")
+            f.write(f"{'='*100}\n")
+
+        if logger:
+            logger.info(f"Results saved to: {save_dir}/{model_name}_results.[json|txt]")
+        return json_path, txt_path
 
 
 def print_metrics(metrics, class_names=None):

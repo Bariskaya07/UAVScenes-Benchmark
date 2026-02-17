@@ -478,12 +478,18 @@ def main():
     )
 
     logger.info("Running test evaluation with sliding window inference...")
+    total_time = 0
+    num_images = 0
+
     for i, sample in enumerate(test_loader):
         rgb = sample['rgb'].to(device)
         hag = sample['hag'].to(device)
         label = sample['label']
 
-        # Sliding window inference
+        # Sliding window inference with timing
+        torch.cuda.synchronize()
+        start_time = time.time()
+
         output = sliding_window_inference(
             model, rgb, hag,
             window_size=cfg.evaluation.slide_size,
@@ -492,14 +498,31 @@ def main():
             device=device
         )
 
+        torch.cuda.synchronize()
+        total_time += time.time() - start_time
+        num_images += rgb.shape[0]
+
         pred = output.argmax(dim=1).cpu()
         test_metrics_obj.update(pred, label)
 
         if (i + 1) % 50 == 0:
             logger.info(f'Test: {i + 1}/{len(test_loader)} samples')
 
+    # Calculate inference speed
+    avg_time_ms = (total_time / num_images) * 1000
+    fps = num_images / total_time
+
     # Print detailed results
     test_metrics_obj.print_results(logger)
+
+    # Print and save inference speed
+    logger.info(f"\nInference speed:")
+    logger.info(f"  Average time per image: {avg_time_ms:.1f}ms")
+    logger.info(f"  FPS: {fps:.2f}")
+
+    # Save results to file
+    results_dir = os.path.join(cfg.logging.checkpoint_dir, 'results')
+    test_metrics_obj.save_results(results_dir, 'TokenFusion', avg_time_ms, fps, num_images, logger)
 
 
 if __name__ == '__main__':

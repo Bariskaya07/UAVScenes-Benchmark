@@ -579,6 +579,10 @@ with Engine(custom_parser=parser) as engine:
         test_metrics = UAVScenesMetrics(num_classes=config.num_classes, ignore_label=config.background)
 
         logger.info("Running test evaluation with sliding window inference...")
+        import time
+        total_time = 0
+        num_images = 0
+
         with torch.no_grad():
             device = torch.device("cuda")
             for sample in tqdm(test_loader, desc="Test evaluation"):
@@ -586,13 +590,33 @@ with Engine(custom_parser=parser) as engine:
                 gts = sample['label']
                 modal_xs = sample['modal_x'].cuda(non_blocking=True)
 
-                # Sliding window inference
+                # Sliding window inference with timing
+                torch.cuda.synchronize()
+                start_time = time.time()
+
                 images = [imgs, modal_xs]
                 preds = slide_inference(model, images, modal_xs, config)
+
+                torch.cuda.synchronize()
+                total_time += time.time() - start_time
+                num_images += imgs.shape[0]
+
                 preds = preds.argmax(dim=1).cpu().numpy()
                 gts = gts.numpy()
-
                 test_metrics.update(preds, gts)
+
+        # Calculate inference speed
+        avg_time_ms = (total_time / num_images) * 1000
+        fps = num_images / total_time
 
         # Print detailed results
         test_metrics.print_results(logger)
+
+        # Print and save inference speed
+        logger.info(f"\nInference speed:")
+        logger.info(f"  Average time per image: {avg_time_ms:.1f}ms")
+        logger.info(f"  FPS: {fps:.2f}")
+
+        # Save results to file
+        results_dir = os.path.join(config.log_dir, 'results')
+        test_metrics.save_results(results_dir, 'DFormer', avg_time_ms, fps, num_images, logger)

@@ -332,6 +332,10 @@ with Engine(custom_parser=parser) as engine:
                             verbose=False, config=config)
 
     logger.info("Running test evaluation with sliding window inference...")
+    import time
+    total_time = 0
+    num_images = 0
+
     with torch.no_grad():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         for idx in tqdm(range(len(test_dataset)), desc="Test evaluation"):
@@ -340,11 +344,31 @@ with Engine(custom_parser=parser) as engine:
             label = sample['label']
             modal_x = sample['modal_x']
 
-            # Sliding window inference
+            # Sliding window inference with timing
+            torch.cuda.synchronize()
+            start_time = time.time()
+
             pred = segmentor.sliding_eval_rgbX(img, modal_x,
                                                config.eval_crop_size, config.eval_stride_rate, device)
 
+            torch.cuda.synchronize()
+            total_time += time.time() - start_time
+            num_images += 1
+
             test_metrics.update(pred, label)
+
+    # Calculate inference speed
+    avg_time_ms = (total_time / num_images) * 1000
+    fps = num_images / total_time
 
     # Print detailed results
     test_metrics.print_results(logger)
+
+    # Print and save inference speed
+    logger.info(f"\nInference speed:")
+    logger.info(f"  Average time per image: {avg_time_ms:.1f}ms")
+    logger.info(f"  FPS: {fps:.2f}")
+
+    # Save results to file
+    results_dir = os.path.join(config.log_dir, 'results')
+    test_metrics.save_results(results_dir, 'Sigma', avg_time_ms, fps, num_images, logger)
