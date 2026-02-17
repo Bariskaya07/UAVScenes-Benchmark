@@ -405,7 +405,7 @@ def main(cfg):
         # dataset = eval(cfg['DATASET']['NAME'])(cfg['DATASET']['ROOT'], 'test', transform, cfg['DATASET']['MODALS'], case)
 
         model = eval(cfg["MODEL"]["NAME"])(cfg["MODEL"]["BACKBONE"], dataset.n_classes, cfg["DATASET"]["MODALS"])
-        msg = model.load_state_dict(torch.load(str(model_path), map_location="cpu"))
+        msg = model.load_state_dict(torch.load(str(model_path), map_location="cpu", weights_only=False))
         # print(msg)
         model = model.to(device)
         sampler_val = None

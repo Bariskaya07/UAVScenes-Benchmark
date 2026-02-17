@@ -89,7 +89,7 @@ def create_model(cfg, checkpoint_path, device):
     # Load checkpoint
     if checkpoint_path:
         print(f"Loading checkpoint: {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         if 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
             print(f"Loaded from epoch {checkpoint.get('epoch', 'unknown')}, "
@@ -103,10 +103,10 @@ def create_model(cfg, checkpoint_path, device):
 
 
 def sliding_window_inference(model, inputs, cfg):
-    """Sliding window inference."""
+    """Sliding window inference with fixed 768x768 crop and 512 stride for fair benchmarking."""
     eval_cfg = cfg.get('EVAL', {})
-    crop_size = eval_cfg.get('CROP_SIZE', [1024, 1024])
-    stride = eval_cfg.get('STRIDE', [768, 768])
+    crop_size = eval_cfg.get('CROP_SIZE', [768, 768])
+    stride = eval_cfg.get('STRIDE', [512, 512])
     num_classes = cfg['MODEL']['NUM_CLASSES']
 
     if isinstance(inputs, (list, tuple)):

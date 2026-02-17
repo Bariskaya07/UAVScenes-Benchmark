@@ -315,3 +315,57 @@ def get_val_loader(engine, dataset, config, val_batch_size=1):
     )
 
     return val_loader, val_sampler
+
+
+def get_test_loader(engine, dataset, config, test_batch_size=1):
+    """Get test dataloader for final evaluation."""
+    # Handle UAVScenes dataset differently (uses scene-based loading)
+    if config.dataset_name == "UAVScenes":
+        data_setting = {
+            "dataset_path": config.dataset_path,
+            "transform_gt": config.gt_transform,
+            "class_names": config.class_names,
+            "dataset_name": config.dataset_name,
+            "backbone": config.backbone,
+            "hag_max_meters": getattr(config, 'hag_max_meters', 150.0),
+        }
+    else:
+        data_setting = {
+            "rgb_root": config.rgb_root_folder,
+            "rgb_format": config.rgb_format,
+            "gt_root": config.gt_root_folder,
+            "gt_format": config.gt_format,
+            "transform_gt": config.gt_transform,
+            "x_root": config.x_root_folder,
+            "x_format": config.x_format,
+            "x_single_channel": config.x_is_single_channel,
+            "class_names": config.class_names,
+            "train_source": config.train_source,
+            "eval_source": config.eval_source,
+            "dataset_name": config.dataset_name,
+            "backbone": config.backbone,
+        }
+    test_preprocess = ValPre(config.norm_mean, config.norm_std, config.x_is_single_channel, config)
+
+    test_dataset = dataset(data_setting, "test", test_preprocess)
+
+    test_sampler = None
+    is_shuffle = False
+    batch_size = test_batch_size
+
+    if engine.distributed:
+        test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset)
+        batch_size = test_batch_size // engine.world_size
+        is_shuffle = False
+
+    test_loader = data.DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        num_workers=config.num_workers,
+        drop_last=False,
+        shuffle=is_shuffle,
+        pin_memory=True,
+        sampler=test_sampler,
+    )
+
+    return test_loader, test_sampler

@@ -113,7 +113,7 @@ with Engine(custom_parser=parser) as engine:
         syncbn=args.syncbn,
     )
 
-    weight = torch.load(args.continue_fpath, map_location=torch.device("cpu"))
+    weight = torch.load(args.continue_fpath, map_location=torch.device("cpu"), weights_only=False)
     if "model" in weight:
         weight = weight["model"]
     elif "state_dict" in weight:

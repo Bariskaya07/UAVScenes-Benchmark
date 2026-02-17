@@ -558,3 +558,41 @@ with Engine(custom_parser=parser) as engine:
         logger.info(
             f"Avg train time: {train_timer.mean_time:.2f}s, avg eval time: {eval_timer.mean_time:.2f}s, left eval count: {eval_count}, ETA: {eta}"
         )
+
+    # Final evaluation on test set with slide mode
+    if (engine.distributed and engine.local_rank == 0) or (not engine.distributed):
+        logger.info("\n" + "=" * 60)
+        logger.info("Final evaluation on TEST set with SLIDE mode")
+        logger.info("=" * 60)
+
+        # Create test dataloader
+        from utils.dataloader.dataloader import get_test_loader
+        test_loader, _ = get_test_loader(engine, DatasetClass, config)
+        logger.info(f"Test set: {len(test_loader.dataset)} samples")
+
+        # Evaluate with slide mode using UAVScenesMetrics for detailed output
+        from utils.metrics_new import UAVScenesMetrics
+        from val_mm import slide_inference
+        from tqdm import tqdm
+
+        model.eval()
+        test_metrics = UAVScenesMetrics(num_classes=config.num_classes, ignore_label=config.background)
+
+        logger.info("Running test evaluation with sliding window inference...")
+        with torch.no_grad():
+            device = torch.device("cuda")
+            for sample in tqdm(test_loader, desc="Test evaluation"):
+                imgs = sample['data'].cuda(non_blocking=True)
+                gts = sample['label']
+                modal_xs = sample['modal_x'].cuda(non_blocking=True)
+
+                # Sliding window inference
+                images = [imgs, modal_xs]
+                preds = slide_inference(model, images, modal_xs, config)
+                preds = preds.argmax(dim=1).cpu().numpy()
+                gts = gts.numpy()
+
+                test_metrics.update(preds, gts)
+
+        # Print detailed results
+        test_metrics.print_results(logger)

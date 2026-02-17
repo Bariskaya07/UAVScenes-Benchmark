@@ -211,7 +211,7 @@ def evaluate(args):
 
     # Load checkpoint
     print(f"Loading checkpoint: {args.resume}")
-    checkpoint = torch.load(args.resume, map_location="cpu")
+    checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
 
     # Handle DDP checkpoint
     state_dict = checkpoint["segmenter"]

@@ -30,7 +30,7 @@ from models import WeTr
 from datasets import UAVScenesDataset
 from utils.transforms import TrainTransform, ValTransform
 from utils.optimizer import PolyWarmupAdamW
-from utils.metrics import ConfusionMatrix, print_metrics, UAVSCENES_CLASSES
+from utils.metrics import ConfusionMatrix, print_metrics, UAVSCENES_CLASSES, UAVScenesMetrics
 from utils.helpers import (
     setup_logger, save_checkpoint, load_checkpoint,
     AverageMeter, set_seed, count_parameters, sliding_window_inference
@@ -454,6 +454,52 @@ def main():
 
     logger.info(f"\nTraining completed!")
     logger.info(f"Best mIoU: {best_miou * 100:.2f}%")
+
+    # Final evaluation on test set with slide mode
+    logger.info("\n" + "=" * 60)
+    logger.info("Final evaluation on TEST set with SLIDE mode")
+    logger.info("=" * 60)
+
+    # Load best model
+    best_path = os.path.join(cfg.logging.checkpoint_dir, 'best.pth')
+    if os.path.exists(best_path):
+        logger.info(f"Loading best model: {best_path}")
+        checkpoint = torch.load(best_path, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['model'])
+
+    # Evaluate on test set with slide mode using UAVScenesMetrics for detailed output
+    test_mode = getattr(cfg.evaluation, 'test_mode', 'slide')
+    logger.info(f"Test mode: {test_mode}")
+
+    # Use UAVScenesMetrics for detailed results
+    test_metrics_obj = UAVScenesMetrics(
+        num_classes=cfg.dataset.num_classes,
+        ignore_label=cfg.dataset.ignore_label
+    )
+
+    logger.info("Running test evaluation with sliding window inference...")
+    for i, sample in enumerate(test_loader):
+        rgb = sample['rgb'].to(device)
+        hag = sample['hag'].to(device)
+        label = sample['label']
+
+        # Sliding window inference
+        output = sliding_window_inference(
+            model, rgb, hag,
+            window_size=cfg.evaluation.slide_size,
+            stride=cfg.evaluation.slide_stride,
+            num_classes=cfg.dataset.num_classes,
+            device=device
+        )
+
+        pred = output.argmax(dim=1).cpu()
+        test_metrics_obj.update(pred, label)
+
+        if (i + 1) % 50 == 0:
+            logger.info(f'Test: {i + 1}/{len(test_loader)} samples')
+
+    # Print detailed results
+    test_metrics_obj.print_results(logger)
 
 
 if __name__ == '__main__':

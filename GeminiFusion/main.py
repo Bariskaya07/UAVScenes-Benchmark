@@ -244,10 +244,17 @@ def create_uavscenes_loaders(args, input_scale):
         Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
 
-    # Validation transforms
+    # Validation transforms (resize for fast validation during training)
     composed_val = transforms.Compose([
         ToTensor(),
         Resize(input_scale),
+        Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    ])
+
+    # Test transforms (full resolution for accurate slide mode evaluation)
+    composed_test = transforms.Compose([
+        ToTensor(),
+        # No resize - keep full resolution for sliding window inference
         Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
 
@@ -269,7 +276,7 @@ def create_uavscenes_loaders(args, input_scale):
     testset = UAVScenesDataset(
         data_root=args.train_dir,
         split='test',  # Test set only for final evaluation
-        transform=composed_val,
+        transform=composed_test,  # Full resolution for slide mode
         hag_max_height=args.hag_max_height,
     )
 
@@ -316,7 +323,7 @@ def create_uavscenes_loaders(args, input_scale):
 def load_ckpt(ckpt_path, ckpt_dict, is_pretrain_finetune=False):
     """Load checkpoint."""
     print("----------------")
-    ckpt = torch.load(ckpt_path, map_location="cpu")
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     new_segmenter_ckpt = dict()
 
     if is_pretrain_finetune:
@@ -406,10 +413,68 @@ def train(
         batch_time.update(time.time() - start)
 
 
+def sliding_window_inference(segmenter, inputs, num_classes, window_size=768, stride=512):
+    """Sliding window inference for full resolution images."""
+    B, C, H, W = inputs[0].shape
+    device = inputs[0].device
+
+    # Initialize output tensors
+    output_sum = torch.zeros((B, num_classes, H, W), device=device)
+    count_map = torch.zeros((B, 1, H, W), device=device)
+
+    h_start = 0
+    while h_start < H:
+        h_end = min(h_start + window_size, H)
+        if h_end - h_start < window_size and h_start > 0:
+            h_start = H - window_size
+            h_end = H
+
+        w_start = 0
+        while w_start < W:
+            w_end = min(w_start + window_size, W)
+            if w_end - w_start < window_size and w_start > 0:
+                w_start = W - window_size
+                w_end = W
+
+            # Crop inputs
+            crop_inputs = [x[:, :, h_start:h_end, w_start:w_end] for x in inputs]
+
+            # Forward pass
+            outputs, _ = segmenter(crop_inputs)
+            crop_output = outputs[-1]  # Use ensemble output
+
+            # Resize if needed
+            if crop_output.shape[2:] != (h_end - h_start, w_end - w_start):
+                crop_output = F.interpolate(
+                    crop_output,
+                    size=(h_end - h_start, w_end - w_start),
+                    mode='bilinear',
+                    align_corners=False
+                )
+
+            output_sum[:, :, h_start:h_end, w_start:w_end] += crop_output
+            count_map[:, :, h_start:h_end, w_start:w_end] += 1
+
+            if w_end == W:
+                break
+            w_start += stride
+
+        if h_end == H:
+            break
+        h_start += stride
+
+    return output_sum / count_map
+
+
 def validate(
-    segmenter, input_types, val_loader, epoch, save_dir, num_classes=19, save_image=0
+    segmenter, input_types, val_loader, epoch, save_dir, num_classes=19, save_image=0,
+    eval_mode='whole'
 ):
-    """Validate model."""
+    """Validate model.
+
+    Args:
+        eval_mode: 'whole' for fast validation (resize), 'slide' for accurate (sliding window)
+    """
     global best_iou
     val_loader.dataset.set_stage("val")
     segmenter.eval()
@@ -417,6 +482,8 @@ def validate(
     conf_mat = []
     for _ in range(len(input_types) + 1):
         conf_mat.append(np.zeros((num_classes, num_classes), dtype=int))
+
+    print_log(f"Evaluating with mode: {eval_mode}")
 
     with torch.no_grad():
         all_times = 0
@@ -429,24 +496,47 @@ def validate(
             gt_idx = gt < num_classes  # Ignore labels >= num_classes
 
             start_time = time.time()
-            outputs, _ = segmenter(inputs)
+
+            if eval_mode == 'slide':
+                # Sliding window inference (accurate but slow)
+                ensemble_output = sliding_window_inference(
+                    segmenter, inputs, num_classes, window_size=768, stride=512
+                )
+                # For slide mode, we only get ensemble output
+                outputs_for_conf = [ensemble_output]
+            else:
+                # Whole image inference (fast, uses resized input from dataloader)
+                outputs, _ = segmenter(inputs)
+                outputs_for_conf = outputs
+
             end_time = time.time()
             all_times += end_time - start_time
 
-            for idx, output in enumerate(outputs):
-                output = (
-                    cv2.resize(
-                        output[0, :num_classes].data.cpu().numpy().transpose(1, 2, 0),
-                        target.size()[1:][::-1],
-                        interpolation=cv2.INTER_CUBIC,
+            # Process outputs for confusion matrix
+            if eval_mode == 'slide':
+                # Only process ensemble output for slide mode
+                output = ensemble_output[0].data.cpu().numpy()
+                output = cv2.resize(
+                    output[:num_classes].transpose(1, 2, 0),
+                    target.size()[1:][::-1],
+                    interpolation=cv2.INTER_CUBIC,
+                ).argmax(axis=2).astype(np.uint8)
+                conf_mat[-1] += confusion_matrix(gt[gt_idx], output[gt_idx], num_classes)
+            else:
+                for idx, output in enumerate(outputs_for_conf):
+                    output = (
+                        cv2.resize(
+                            output[0, :num_classes].data.cpu().numpy().transpose(1, 2, 0),
+                            target.size()[1:][::-1],
+                            interpolation=cv2.INTER_CUBIC,
+                        )
+                        .argmax(axis=2)
+                        .astype(np.uint8)
                     )
-                    .argmax(axis=2)
-                    .astype(np.uint8)
-                )
-                # Compute IoU
-                conf_mat[idx] += confusion_matrix(
-                    gt[gt_idx], output[gt_idx], num_classes
-                )
+                    # Compute IoU
+                    conf_mat[idx] += confusion_matrix(
+                        gt[gt_idx], output[gt_idx], num_classes
+                    )
 
                 if i < save_image or save_image == -1:
                     img = make_validation_img(
@@ -698,6 +788,48 @@ def main():
         )
 
     print_log(f"All stages finished. Best Val is {saver.best_val:.3f}")
+
+    # Final evaluation on test set
+    print_log("\n" + "=" * 60)
+    print_log("Final evaluation on TEST set")
+    print_log("=" * 60)
+
+    # Load best model
+    best_ckpt = os.path.join(ckpt_dir, "ckpt.pth")
+    if os.path.exists(best_ckpt):
+        print_log(f"Loading best checkpoint: {best_ckpt}")
+        ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=False)
+        if "segmenter" in ckpt:
+            no_ddp_segmenter.load_state_dict(ckpt["segmenter"], strict=False)
+
+    # Evaluate on test set with slide mode using UAVScenesMetrics for detailed output
+    from utils.metrics import UAVScenesMetrics
+
+    no_ddp_segmenter.eval()
+    test_metrics = UAVScenesMetrics(num_classes=args.num_classes, ignore_label=255)
+
+    print_log("Running test evaluation with sliding window inference...")
+    with torch.no_grad():
+        for i, sample in enumerate(test_loader):
+            inputs = [sample[key].float().cuda() for key in args.input]
+            target = sample["mask"]
+
+            # Sliding window inference
+            ensemble_output = sliding_window_inference(
+                no_ddp_segmenter, inputs, args.num_classes, window_size=768, stride=512
+            )
+
+            pred = ensemble_output.argmax(dim=1).cpu().numpy()
+            gt = target[0].data.cpu().numpy()
+
+            test_metrics.update(pred, gt)
+
+            if (i + 1) % 50 == 0:
+                print_log(f'Test: {i + 1}/{len(test_loader)} samples')
+
+    # Print detailed results
+    test_metrics.print_results()
+
     helpers.logger.close()
     cleanup_ddp()
 

@@ -28,13 +28,21 @@ def pad_image(img, target_size):
     return padded_img
 
 @torch.no_grad()
-def sliding_predict(model, image, num_classes, flip=True):
-    image_size = image[0].shape
-    tile_size = (int(ceil(image_size[2]*1)), int(ceil(image_size[3]*1)))
-    overlap = 1/3
+def sliding_predict(model, image, num_classes, flip=True, crop_size=768, stride_size=512):
+    """Sliding window inference with fixed crop size and stride for fair benchmarking.
 
-    stride = ceil(tile_size[0] * (1 - overlap))
-    
+    Args:
+        model: The segmentation model
+        image: List of input modalities [rgb, modal_x, ...]
+        num_classes: Number of segmentation classes
+        flip: Whether to use flip augmentation
+        crop_size: Size of sliding window (default: 768 for 768x768)
+        stride_size: Stride between windows (default: 512 for ~33% overlap)
+    """
+    image_size = image[0].shape
+    tile_size = (crop_size, crop_size)
+    stride = stride_size
+
     num_rows = int(ceil((image_size[2] - tile_size[0]) / stride) + 1)
     num_cols = int(ceil((image_size[3] - tile_size[1]) / stride) + 1)
     total_predictions = torch.zeros((num_classes, image_size[2], image_size[3]), device=torch.device('cuda'))
@@ -134,20 +142,30 @@ def main(cfg):
     # cases = [None] # all
     
     model_path = Path(eval_cfg['MODEL_PATH'])
-    if not model_path.exists(): 
+    if not model_path.exists():
         raise FileNotFoundError
     print(f"Evaluating {model_path}...")
+
+    # Determine eval mode based on split
+    # For test set: use TEST.MODE (default: slide for accuracy)
+    # For val set: use EVAL.MODE (default: whole for speed)
+    split = cfg.get('SPLIT', 'val')  # Can be overridden via config or will add CLI arg
+    if split == 'test':
+        eval_mode = cfg.get('TEST', {}).get('MODE', 'slide')
+    else:
+        eval_mode = eval_cfg.get('MODE', 'whole')
+    sliding = (eval_mode == 'slide')
+    print(f"Split: {split}, Eval mode: {eval_mode} (sliding={sliding})")
 
     exp_time = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     eval_path = os.path.join(os.path.dirname(eval_cfg['MODEL_PATH']), 'eval_{}.txt'.format(exp_time))
 
     for case in cases:
-        dataset = eval(cfg['DATASET']['NAME'])(cfg['DATASET']['ROOT'], 'val', transform, cfg['DATASET']['MODALS'], case)
-        # --- test set
-        # dataset = eval(cfg['DATASET']['NAME'])(cfg['DATASET']['ROOT'], 'test', transform, cfg['DATASET']['MODALS'], case)
+        # Use split from config (set via --split argument)
+        dataset = eval(cfg['DATASET']['NAME'])(cfg['DATASET']['ROOT'], split, transform, cfg['DATASET']['MODALS'], case)
 
         model = eval(cfg['MODEL']['NAME'])(cfg['MODEL']['BACKBONE'], dataset.n_classes, cfg['DATASET']['MODALS'])
-        state_dict = torch.load(model_path, map_location='cpu')
+        state_dict = torch.load(model_path, map_location='cpu', weights_only=False)
         msg = model.load_state_dict(state_dict)
         print(msg)
         model = model.to(device)
@@ -157,7 +175,8 @@ def main(cfg):
             if eval_cfg['MSF']['ENABLE']:
                 acc, macc, f1, mf1, ious, miou = evaluate_msf(model, dataloader, device, eval_cfg['MSF']['SCALES'], eval_cfg['MSF']['FLIP'])
             else:
-                acc, macc, f1, mf1, ious, miou = evaluate(model, dataloader, device)
+                eval_size = tuple(eval_cfg.get('IMAGE_SIZE', [768, 768]))
+                acc, macc, f1, mf1, ious, miou = evaluate(model, dataloader, device, eval_size=eval_size, sliding=sliding)
 
             table = {
                 'Class': list(dataset.CLASSES) + ['Mean'],
@@ -179,10 +198,15 @@ def main(cfg):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', type=str, default='configs/deliver_rgbdelmulmamba.yaml')
+    parser.add_argument('--split', type=str, default='val', choices=['val', 'test'],
+                        help='Dataset split to evaluate (val or test)')
     args = parser.parse_args()
 
     with open(args.cfg) as f:
         cfg = yaml.load(f, Loader=yaml.SafeLoader)
+
+    # Set split in config for main() to use
+    cfg['SPLIT'] = args.split
 
     setup_cudnn()
     # gpu = setup_ddp()

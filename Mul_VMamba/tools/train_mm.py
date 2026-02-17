@@ -167,6 +167,51 @@ def main(cfg, gpu, save_dir):
     ]
     logger.info(tabulate(table, numalign='right'))
 
+    # Final evaluation on test set with slide mode
+    if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
+        logger.info("\n" + "="*60)
+        logger.info("Final evaluation on TEST set with SLIDE mode")
+        logger.info("="*60)
+
+        # Load best model
+        best_ckpt_pattern = save_dir / f"*_epoch{best_epoch}_*_checkpoint.pth"
+        import glob
+        best_ckpts = glob.glob(str(best_ckpt_pattern))
+        if best_ckpts:
+            best_ckpt = best_ckpts[0]
+            checkpoint = torch.load(best_ckpt, map_location=device, weights_only=False)
+            if 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                model.load_state_dict(checkpoint)
+            logger.info(f"Loaded best checkpoint: {best_ckpt}")
+
+        # Create test dataloader
+        testset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'test', valtransform, dataset_cfg['MODALS'])
+        testloader = DataLoader(testset, batch_size=eval_cfg['BATCH_SIZE'], num_workers=num_workers, pin_memory=False)
+        logger.info(f"Test set: {len(testset)} samples")
+
+        # Evaluate with slide mode using UAVScenesMetrics for detailed output
+        from semseg.metrics import UAVScenesMetrics
+
+        model.eval()
+        test_metrics = UAVScenesMetrics(num_classes=testset.n_classes, ignore_label=testset.ignore_label)
+
+        logger.info(f"Evaluating with SLIDE mode...")
+        for images, labels in tqdm(testloader, desc="Test evaluation"):
+            images = [x.to(device) for x in images]
+            labels = labels.numpy()
+
+            # Sliding window inference
+            from val_mm import sliding_predict
+            preds = sliding_predict(model, images, num_classes=testset.n_classes)
+            preds = preds.argmax(dim=1).cpu().numpy()
+
+            test_metrics.update(preds, labels)
+
+        # Print detailed results
+        test_metrics.print_results(logger)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

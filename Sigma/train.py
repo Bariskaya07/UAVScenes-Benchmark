@@ -282,3 +282,69 @@ with Engine(custom_parser=parser) as engine:
                         if os.path.exists(checkpoint_path):
                             os.remove(checkpoint_path)
                 model.train()
+
+    # Final evaluation on test set with slide mode
+    logger.info("\n" + "=" * 60)
+    logger.info("Final evaluation on TEST set with SLIDE mode")
+    logger.info("=" * 60)
+
+    # Create test dataset
+    test_setting = {'rgb_root': config.rgb_root_folder,
+                    'rgb_format': config.rgb_format,
+                    'gt_root': config.gt_root_folder,
+                    'gt_format': config.gt_format,
+                    'transform_gt': config.gt_transform,
+                    'x_root': config.x_root_folder,
+                    'x_format': config.x_format,
+                    'x_single_channel': config.x_is_single_channel,
+                    'class_names': config.class_names,
+                    'train_source': config.train_source,
+                    'eval_source': config.eval_source,
+                    'class_names': config.class_names,
+                    'dataset_path': config.dataset_path if hasattr(config, 'dataset_path') else '',
+                    'hag_max_meters': config.hag_max_meters if hasattr(config, 'hag_max_meters') else 50.0}
+    test_pre = ValPre()
+    test_dataset = DatasetClass(test_setting, 'test', test_pre)
+    logger.info(f"Test set: {len(test_dataset)} samples")
+
+    # Load best model
+    best_ckpt = os.path.join(config.checkpoint_dir, f'epoch-{best_epoch}.pth')
+    if os.path.exists(best_ckpt):
+        logger.info(f"Loading best checkpoint: {best_ckpt}")
+        checkpoint = torch.load(best_ckpt, map_location='cpu', weights_only=False)
+        if 'model' in checkpoint:
+            model.load_state_dict(checkpoint['model'])
+        else:
+            model.load_state_dict(checkpoint)
+
+    # Evaluate with slide mode using UAVScenesMetrics for detailed output
+    from utils.metric import UAVScenesMetrics
+    from tqdm import tqdm
+
+    model.eval()
+    test_metrics = UAVScenesMetrics(num_classes=config.num_classes, ignore_label=config.background)
+
+    # Create evaluator for sliding window inference
+    segmentor = SegEvaluator(dataset=test_dataset, class_num=config.num_classes,
+                            norm_mean=config.norm_mean, norm_std=config.norm_std,
+                            network=model, multi_scales=config.eval_scale_array,
+                            is_flip=config.eval_flip, devices=[0],
+                            verbose=False, config=config)
+
+    logger.info("Running test evaluation with sliding window inference...")
+    with torch.no_grad():
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        for idx in tqdm(range(len(test_dataset)), desc="Test evaluation"):
+            sample = test_dataset[idx]
+            img = sample['data']
+            label = sample['label']
+            modal_x = sample['modal_x']
+
+            # Sliding window inference
+            pred = segmentor.sliding_eval_rgbX(img, modal_x,
+                                               config.eval_crop_size, config.eval_stride_rate, device)
+
+            test_metrics.update(pred, label)
+
+    # Print detailed results
+    test_metrics.print_results(logger)

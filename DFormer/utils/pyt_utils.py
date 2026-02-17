@@ -137,7 +137,7 @@ def load_restore_model(model, model_file):
         return model
 
     if isinstance(model_file, str):
-        state_dict = torch.load(model_file)
+        state_dict = torch.load(model_file, weights_only=False)
         if "model" in state_dict.keys():
             state_dict = state_dict["model"]
         elif "state_dict" in state_dict.keys():
@@ -166,7 +166,7 @@ def load_model(model, model_file, is_restore=False):
         return model
 
     if isinstance(model_file, str):
-        state_dict = torch.load(model_file)
+        state_dict = torch.load(model_file, weights_only=False)
         if "model" in state_dict.keys():
             state_dict = state_dict["model"]
         elif "state_dict" in state_dict.keys():

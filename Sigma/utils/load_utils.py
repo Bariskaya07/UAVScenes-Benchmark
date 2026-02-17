@@ -71,7 +71,7 @@ def load_pretrain(model,
                     filename,
                     strict=False,
                     revise_keys=[(r'^module\.', '')]):
-    checkpoint = torch.load(filename)
+    checkpoint = torch.load(filename, weights_only=False)
     # OrderedDict is a subclass of dict
     if not isinstance(checkpoint, dict):
         raise RuntimeError(

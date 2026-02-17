@@ -140,9 +140,9 @@ class Engine(object):
             # tmp = torch.load(self.continue_state_object,
             #                  map_location=lambda storage, loc: storage.cuda(
             #                      self.local_rank))
-            tmp = torch.load(self.continue_state_object, map_location=torch.device('cpu'))
+            tmp = torch.load(self.continue_state_object, map_location=torch.device('cpu'), weights_only=False)
         else:
-            tmp = torch.load(self.continue_state_object)
+            tmp = torch.load(self.continue_state_object, weights_only=False)
         t_ioend = time.time()
         self.state.model = load_model(self.state.model, tmp['model'], is_restore=True)
         self.state.optimizer.load_state_dict(tmp['optimizer'])

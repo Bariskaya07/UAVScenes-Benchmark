@@ -86,7 +86,7 @@ def load_checkpoint(filename, model, optimizer=None, device='cuda'):
     if not os.path.exists(filename):
         raise FileNotFoundError(f"Checkpoint not found: {filename}")
 
-    checkpoint = torch.load(filename, map_location=device)
+    checkpoint = torch.load(filename, map_location=device, weights_only=False)
 
     # Load model weights
     if 'model' in checkpoint:
