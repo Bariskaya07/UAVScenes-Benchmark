@@ -311,6 +311,9 @@ def validate(model, val_loader, cfg, device, logger, eval_mode='whole'):
             outputs, _ = model([rgb, hag])
             # Use ensemble output (last one)
             output = outputs[-1]
+            # Upsample to label size (model outputs at 1/4 resolution)
+            label_size = label.shape[1:]  # (H, W)
+            output = F.interpolate(output, size=label_size, mode='bilinear', align_corners=False)
 
         # Get predictions
         pred = output.argmax(dim=1).cpu()
