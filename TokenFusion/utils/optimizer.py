@@ -78,8 +78,10 @@ class PolyWarmupAdamW:
             Learning rate multiplier
         """
         if current_iter < self.warmup_iter:
-            # Linear warmup
-            return float(current_iter) / float(max(1, self.warmup_iter))
+            # Linear warmup from warmup_ratio to 1.0 (matching CMNeXt)
+            warmup_ratio = 0.1  # CMNeXt paper setting
+            alpha = float(current_iter) / float(max(1, self.warmup_iter))
+            return warmup_ratio + (1 - warmup_ratio) * alpha
         else:
             # Polynomial decay
             return (1 - (current_iter - self.warmup_iter) / (self.max_iter - self.warmup_iter)) ** self.power
