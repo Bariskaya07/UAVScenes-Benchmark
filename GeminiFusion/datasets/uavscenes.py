@@ -43,35 +43,36 @@ TEST_SCENES = [
     "interval5_HKisland_GNSS_Evening",
 ]  # 4 scenes
 
-# Label mapping: Original 26 classes -> 19 used classes
-# Format: original_id: new_id (255 = ignore)
+# Label mapping: Original UAVScenes labels -> 19 contiguous classes
+# Based on cmap.py - IDs 7, 8, 12, 21, 22, 23, 25 are EMPTY (unused)
+# This mapping must match CMNeXt exactly for fair comparison!
 LABEL_MAPPING = {
-    0: 255,    # void -> ignore
-    1: 0,      # background
-    2: 1,      # roof
-    3: 2,      # dirt_road
-    4: 3,      # paved_road
-    5: 4,      # river
-    6: 5,      # pool
-    7: 6,      # bridge
-    8: 7,      # container
-    9: 8,      # airstrip
-    10: 9,     # traffic_barrier
-    11: 10,    # green_field
-    12: 11,    # wild_field
-    13: 12,    # solar_panel
-    14: 13,    # umbrella
-    15: 14,    # transparent_roof
-    16: 15,    # car_park
-    17: 16,    # paved_walk
-    18: 17,    # sedan (dynamic)
-    19: 18,    # truck (dynamic)
-    20: 255,   # unused -> ignore
-    21: 255,   # unused -> ignore
-    22: 255,   # unused -> ignore
-    23: 255,   # unused -> ignore
-    24: 255,   # unused -> ignore
-    25: 255,   # unused -> ignore
+    0: 0,      # background
+    1: 1,      # roof
+    2: 2,      # dirt_road (dirt_motor_road)
+    3: 3,      # paved_road (paved_motor_road)
+    4: 4,      # river
+    5: 5,      # pool
+    6: 6,      # bridge
+    7: 255,    # EMPTY -> ignore
+    8: 255,    # EMPTY -> ignore
+    9: 7,      # container
+    10: 8,     # airstrip
+    11: 9,     # traffic_barrier
+    12: 255,   # EMPTY -> ignore
+    13: 10,    # green_field
+    14: 11,    # wild_field
+    15: 12,    # solar_panel (solar_board)
+    16: 13,    # umbrella
+    17: 14,    # transparent_roof
+    18: 15,    # car_park
+    19: 16,    # paved_walk
+    20: 17,    # sedan (dynamic)
+    21: 255,   # EMPTY -> ignore
+    22: 255,   # EMPTY -> ignore
+    23: 255,   # EMPTY -> ignore
+    24: 18,    # truck (dynamic)
+    25: 255,   # EMPTY -> ignore
 }
 
 # Class names for 19 classes

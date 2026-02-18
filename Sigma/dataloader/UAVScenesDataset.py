@@ -74,35 +74,36 @@ CLASS_NAMES = [
 
 # ==============================================================================
 # Label Remapping (26 → 19 classes, same as CMNeXt/DFormerV2)
-# Original labels 0, 18, 19, 20, 22, 23, 25 → 255 (ignore)
+# Based on cmap.py - IDs 7, 8, 12, 21, 22, 23, 25 are EMPTY (unused)
+# This mapping must match CMNeXt exactly for fair comparison!
 # ==============================================================================
 LABEL_REMAP = {
-    0: 255,   # unlabeled → ignore
-    1: 0,     # roof → background
-    2: 1,     # dirt_road
-    3: 2,     # paved_road
-    4: 3,     # river
-    5: 4,     # pool
-    6: 5,     # bridge
-    7: 6,     # container
-    8: 7,     # airstrip
-    9: 8,     # traffic_barrier
-    10: 9,    # green_field
-    11: 10,   # wild_field
-    12: 11,   # solar_panel
-    13: 12,   # umbrella
-    14: 13,   # transparent_roof
-    15: 14,   # car_park
-    16: 15,   # paved_walk
-    17: 16,   # (merged to paved_walk or other)
-    18: 255,  # ignore
-    19: 255,  # ignore
-    20: 255,  # ignore
-    21: 17,   # sedan
-    22: 255,  # ignore
-    23: 255,  # ignore
-    24: 18,   # truck
-    25: 255,  # ignore
+    0: 0,      # background
+    1: 1,      # roof
+    2: 2,      # dirt_road (dirt_motor_road)
+    3: 3,      # paved_road (paved_motor_road)
+    4: 4,      # river
+    5: 5,      # pool
+    6: 6,      # bridge
+    7: 255,    # EMPTY -> ignore
+    8: 255,    # EMPTY -> ignore
+    9: 7,      # container
+    10: 8,     # airstrip
+    11: 9,     # traffic_barrier
+    12: 255,   # EMPTY -> ignore
+    13: 10,    # green_field
+    14: 11,    # wild_field
+    15: 12,    # solar_panel (solar_board)
+    16: 13,    # umbrella
+    17: 14,    # transparent_roof
+    18: 15,    # car_park
+    19: 16,    # paved_walk
+    20: 17,    # sedan (dynamic)
+    21: 255,   # EMPTY -> ignore
+    22: 255,   # EMPTY -> ignore
+    23: 255,   # EMPTY -> ignore
+    24: 18,    # truck (dynamic)
+    25: 255,   # EMPTY -> ignore
 }
 
 
