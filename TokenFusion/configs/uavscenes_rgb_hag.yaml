@@ -177,7 +177,7 @@ logging:
   tensorboard: true
 
   # Logging frequency
-  print_freq: 100  # Print every N iterations
+  print_freq: 50  # Print every N iterations
 
 # ==============================================================================
 # Distributed Training (optional)
