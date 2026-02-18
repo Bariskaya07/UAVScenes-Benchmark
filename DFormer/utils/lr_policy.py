@@ -20,15 +20,18 @@ class PolyLR(BaseLR):
 
 
 class WarmUpPolyLR(BaseLR):
-    def __init__(self, start_lr, lr_power, total_iters, warmup_steps):
+    def __init__(self, start_lr, lr_power, total_iters, warmup_steps, warmup_ratio=0.1):
         self.start_lr = start_lr
         self.lr_power = lr_power
         self.total_iters = total_iters + 0.0
         self.warmup_steps = warmup_steps
+        self.warmup_ratio = warmup_ratio  # CMNeXt paper setting
 
     def get_lr(self, cur_iter):
         if cur_iter < self.warmup_steps:
-            return self.start_lr * (cur_iter / self.warmup_steps)
+            # Linear warmup from warmup_ratio to 1.0 (matching CMNeXt)
+            alpha = cur_iter / self.warmup_steps
+            return self.start_lr * (self.warmup_ratio + (1 - self.warmup_ratio) * alpha)
         else:
             return self.start_lr * ((1 - float(cur_iter) / self.total_iters) ** self.lr_power)
 
