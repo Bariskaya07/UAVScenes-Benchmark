@@ -115,7 +115,22 @@ class TrainPre(object):
         return p_rgb, p_gt, p_modal_x
 
 class ValPre(object):
+    def __init__(self, config=None, resize=True):
+        self.config = config
+        self.resize = resize
+        # Default to 768x768 if no config
+        self.image_height = 768
+        self.image_width = 768
+        if config is not None:
+            self.image_height = getattr(config, 'image_height', 768)
+            self.image_width = getattr(config, 'image_width', 768)
+
     def __call__(self, rgb, gt, modal_x):
+        if self.resize:
+            # Resize for fast validation (CPU resize before GPU transfer)
+            rgb = cv2.resize(rgb, (self.image_width, self.image_height), interpolation=cv2.INTER_LINEAR)
+            gt = cv2.resize(gt, (self.image_width, self.image_height), interpolation=cv2.INTER_NEAREST)
+            modal_x = cv2.resize(modal_x, (self.image_width, self.image_height), interpolation=cv2.INTER_LINEAR)
         return rgb, gt, modal_x
 
 def get_train_loader(engine, dataset, config):

@@ -21,6 +21,35 @@ class Compose:
         return sample
 
 
+class Resize:
+    """Fixed resize to target size.
+    Used for validation to avoid loading full resolution images.
+    """
+    def __init__(self, size=768):
+        self.size = size
+
+    def __call__(self, sample):
+        rgb = sample['rgb']
+        hag = sample['hag']
+        label = sample['label']
+
+        # Resize RGB (bilinear interpolation)
+        rgb = cv2.resize(rgb, (self.size, self.size), interpolation=cv2.INTER_LINEAR)
+
+        # Resize HAG (bilinear interpolation)
+        if hag is not None:
+            hag = cv2.resize(hag, (self.size, self.size), interpolation=cv2.INTER_LINEAR)
+
+        # Resize Label (nearest neighbor to preserve class IDs)
+        label = cv2.resize(label, (self.size, self.size), interpolation=cv2.INTER_NEAREST)
+
+        sample['rgb'] = rgb
+        sample['hag'] = hag
+        sample['label'] = label
+
+        return sample
+
+
 class RandomResize:
     """Random resize with scale range.
     Applies the same resize to all modalities.
@@ -269,9 +298,15 @@ def get_train_transform(cfg=None):
 
 def get_val_transform(cfg=None):
     """
-    Build validation/test transforms (normalize only, no augmentation).
+    Build validation/test transforms.
+    Resize to training size for fast validation (no full-resolution loading).
     """
+    crop_size = 768
+    if cfg is not None:
+        crop_size = getattr(cfg.training, 'crop_size', 768)
+
     transforms = [
+        Resize(size=crop_size),  # Resize on CPU before tensor conversion
         Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensor(),
     ]

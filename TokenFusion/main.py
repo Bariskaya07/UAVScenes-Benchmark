@@ -306,19 +306,11 @@ def validate(model, val_loader, cfg, device, logger, eval_mode='whole'):
                 device=device
             )
         else:
-            # Whole image inference (fast but lower accuracy)
-            # Resize inputs to training size for speed
-            orig_size = label.shape[1:]  # (H, W)
-            eval_size = (cfg.training.crop_size, cfg.training.crop_size)
-
-            rgb_resized = F.interpolate(rgb, size=eval_size, mode='bilinear', align_corners=False)
-            hag_resized = F.interpolate(hag, size=eval_size, mode='bilinear', align_corners=False)
-
-            outputs, _ = model([rgb_resized, hag_resized])
+            # Whole image inference (fast)
+            # Images are already resized to crop_size in transform, no GPU resize needed
+            outputs, _ = model([rgb, hag])
             # Use ensemble output (last one)
             output = outputs[-1]
-            # Upsample to original label size
-            output = F.interpolate(output, size=orig_size, mode='bilinear', align_corners=False)
 
         # Get predictions
         pred = output.argmax(dim=1).cpu()

@@ -178,21 +178,22 @@ class ValPre(object):
                 value=(0.0, 0.0, 0.0),
             )
 
-        # rgb = cv2.resize(
-        #     rgb,
-        #     (self.config.image_width, self.config.image_height),
-        #     interpolation=cv2.INTER_LINEAR,
-        # )
-        # gt = cv2.resize(
-        #     gt,
-        #     (self.config.image_width, self.config.image_height),
-        #     interpolation=cv2.INTER_NEAREST,
-        # )
-        # modal_x = cv2.resize(
-        #     modal_x,
-        #     (self.config.image_width, self.config.image_height),
-        #     interpolation=cv2.INTER_LINEAR,
-        # )
+        # Resize for fast validation (CPU resize before GPU transfer)
+        rgb = cv2.resize(
+            rgb,
+            (self.config.image_width, self.config.image_height),
+            interpolation=cv2.INTER_LINEAR,
+        )
+        gt = cv2.resize(
+            gt,
+            (self.config.image_width, self.config.image_height),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        modal_x = cv2.resize(
+            modal_x,
+            (self.config.image_width, self.config.image_height),
+            interpolation=cv2.INTER_LINEAR,
+        )
 
         rgb = normalize(rgb, self.norm_mean, self.norm_std)
         modal_x = normalize(modal_x, [0.48, 0.48, 0.48], [0.28, 0.28, 0.28])

@@ -123,7 +123,7 @@ if __name__ == "__main__":
                     'train_source': config.train_source,
                     'eval_source': config.eval_source,
                     'class_names': config.class_names}
-    val_pre = ValPre()
+    val_pre = ValPre(config, resize=False)  # Eval uses full resolution for sliding window
     dataset = RGBXDataset(data_setting, 'val', val_pre)
  
     with torch.no_grad():

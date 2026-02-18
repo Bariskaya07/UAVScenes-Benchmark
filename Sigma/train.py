@@ -165,7 +165,7 @@ with Engine(custom_parser=parser) as engine:
                     'class_names': config.class_names,
                     'dataset_path': config.dataset_path if hasattr(config, 'dataset_path') else '',
                     'hag_max_meters': config.hag_max_meters if hasattr(config, 'hag_max_meters') else 50.0}
-    val_pre = ValPre()
+    val_pre = ValPre(config)
     val_dataset = DatasetClass(val_setting, 'val', val_pre)
 
     best_mean_iou = 0.0  # Track the best mean IoU for model saving
@@ -327,7 +327,7 @@ with Engine(custom_parser=parser) as engine:
                     'class_names': config.class_names,
                     'dataset_path': config.dataset_path if hasattr(config, 'dataset_path') else '',
                     'hag_max_meters': config.hag_max_meters if hasattr(config, 'hag_max_meters') else 50.0}
-    test_pre = ValPre()
+    test_pre = ValPre(config, resize=False)  # Test uses full resolution for sliding window
     test_dataset = DatasetClass(test_setting, 'test', test_pre)
     logger.info(f"Test set: {len(test_dataset)} samples")
 
