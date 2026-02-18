@@ -233,8 +233,8 @@ class UAVScenesDataset(Dataset):
                 hag_path = os.path.join(hag_dir, f"{timestamp}.png")
                 label_path = os.path.join(label_dir, f"{timestamp}.png")
 
-                # Only add if all files exist
-                if os.path.exists(hag_path) and os.path.exists(label_path):
+                # Only add if all files exist and HAG file is not empty
+                if os.path.exists(hag_path) and os.path.exists(label_path) and os.path.getsize(hag_path) > 0:
                     samples.append({
                         'rgb': rgb_path,
                         'hag': hag_path,
