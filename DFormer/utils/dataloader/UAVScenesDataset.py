@@ -212,7 +212,15 @@ class UAVScenesDataset(data.Dataset):
             for img_file in sorted(os.listdir(rgb_dir)):
                 if img_file.endswith('.jpg') and not img_file.endswith(':Zone.Identifier'):
                     timestamp = img_file.replace('.jpg', '')
-                    file_names.append((scene, timestamp))
+                    # Check HAG file exists and is not empty
+                    hag_path = os.path.join(
+                        self._dataset_path,
+                        "interval5_HAG_CSF",
+                        scene,
+                        f"{timestamp}.png"
+                    )
+                    if os.path.exists(hag_path) and os.path.getsize(hag_path) > 0:
+                        file_names.append((scene, timestamp))
 
         return file_names
 

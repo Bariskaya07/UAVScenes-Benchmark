@@ -317,7 +317,14 @@ class UAVScenesDataset(data.Dataset):
                 if filename.endswith(self._rgb_format):
                     # Extract timestamp (remove extension)
                     timestamp = filename.replace(self._rgb_format, '')
-                    file_names.append((scene, timestamp))
+                    # Check HAG file exists and is not empty
+                    hag_path = os.path.join(
+                        self._x_path,
+                        scene,
+                        f"{timestamp}{self._x_format}"
+                    )
+                    if os.path.exists(hag_path) and os.path.getsize(hag_path) > 0:
+                        file_names.append((scene, timestamp))
 
         return file_names
 
