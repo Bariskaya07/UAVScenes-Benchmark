@@ -375,7 +375,8 @@ def main():
             dummy_rgb = torch.zeros(1, 3, 768, 768).to(device)
             dummy_hag = torch.zeros(1, 3, 768, 768).to(device)
             model.eval()
-            flops = FlopCountAnalysis(model, (dummy_rgb, dummy_hag))
+            # WeTr expects input as list [rgb, hag]
+            flops = FlopCountAnalysis(model, ([dummy_rgb, dummy_hag],))
             logger.info(f"FLOPs: {flops.total() / 1e9:.2f}G")
             model.train()
         except Exception as e:

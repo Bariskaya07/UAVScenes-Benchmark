@@ -655,7 +655,8 @@ def main():
             dummy_rgb = torch.zeros(1, 3, 768, 768).cuda()
             dummy_hag = torch.zeros(1, 3, 768, 768).cuda()
             segmenter.eval()
-            flops = FlopCountAnalysis(segmenter, (dummy_rgb, dummy_hag))
+            # WeTr expects input as list [rgb, hag]
+            flops = FlopCountAnalysis(segmenter, ([dummy_rgb, dummy_hag],))
             print_log(f"FLOPs: {flops.total() / 1e9:.2f}G")
             segmenter.train()
         except Exception as e:
