@@ -315,8 +315,7 @@ class ValTransform:
     """
     Validation transform pipeline.
 
-    For fair comparison, validation uses sliding window inference,
-    so we only apply ToTensor normalization here.
+    Resize to training size for fast validation (CPU resize before GPU transfer).
     """
 
     def __init__(
@@ -324,9 +323,11 @@ class ValTransform:
         rgb_mean=None,
         rgb_std=None,
         hag_mean=None,
-        hag_std=None
+        hag_std=None,
+        size=768
     ):
         self.transform = Compose([
+            Resize(size=size),  # Resize on CPU for fast validation
             ToTensor(rgb_mean=rgb_mean, rgb_std=rgb_std, hag_mean=hag_mean, hag_std=hag_std)
         ])
 
