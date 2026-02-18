@@ -266,7 +266,7 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
                 f'Loss: {loss_meter.avg:.4f} '
                 f'Seg: {seg_loss_meter.avg:.4f} '
                 f'L1: {l1_loss_meter.avg:.6f} '
-                f'LR: {current_lr:.6f} '
+                f'LR: {current_lr:.2e} '
                 f'Time: {batch_time.avg:.3f}s'
             )
 
