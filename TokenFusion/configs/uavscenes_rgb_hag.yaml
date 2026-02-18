@@ -80,7 +80,7 @@ optimizer:
   lr: 6.0e-5
   betas: [0.9, 0.999]
   weight_decay: 0.01
-  warmup_iter: 1500    # Warmup iterations (~3 epochs)
+  warmup_iter: 5412    # Warmup iterations (3 epochs × 1804 iters)
   power: 0.9           # PolyLR power (CMNeXt paper setting)
 
 # ==============================================================================
