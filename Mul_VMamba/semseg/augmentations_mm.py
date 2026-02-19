@@ -413,6 +413,17 @@ def get_val_augmentation(size: Union[int, Tuple[int], List[int]]):
     ])
 
 
+def get_test_augmentation():
+    """Test-time augmentation for fair benchmarking.
+
+    Important: do NOT resize inputs or labels. Sliding-window evaluation is
+    responsible for handling arbitrary image sizes.
+    """
+    return Compose([
+        Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+    ])
+
+
 if __name__ == '__main__':
     h = 230
     w = 420

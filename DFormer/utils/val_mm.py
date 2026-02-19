@@ -102,7 +102,7 @@ def evaluate(model, dataloader, config, device, engine, save_dir=None, sliding=F
         images = [images.to(device), modal_xs.to(device)]
         labels = labels.to(device)
         if sliding:
-            preds = slide_inference(model, images, modal_xs, config).softmax(dim=1)
+            preds = slide_inference(model, images[0], images[1], config).softmax(dim=1)
         else:
             # Whole image inference - resize to training size for speed
             orig_size = labels.shape[1:]  # (H, W)

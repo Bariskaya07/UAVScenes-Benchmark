@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from torch.nn import functional as F
 from semseg.models import *
 from semseg.datasets import *
-from semseg.augmentations_mm import get_val_augmentation
+from semseg.augmentations_mm import get_val_augmentation, get_test_augmentation
 from semseg.metrics import Metrics
 from semseg.utils.utils import setup_cudnn
 from math import ceil
@@ -136,7 +136,21 @@ def main(cfg):
     device = torch.device(cfg['DEVICE'])
 
     eval_cfg = cfg['EVAL']
-    transform = get_val_augmentation(eval_cfg['IMAGE_SIZE'])
+    # Determine eval mode based on split
+    # For test set: use TEST.MODE (default: slide for accuracy)
+    # For val set: use EVAL.MODE (default: whole for speed)
+    split = cfg.get('SPLIT', 'val')  # Can be overridden via config or CLI
+    if split == 'test':
+        eval_mode = cfg.get('TEST', {}).get('MODE', 'slide')
+    else:
+        eval_mode = eval_cfg.get('MODE', 'whole')
+    sliding = (eval_mode == 'slide')
+
+    # Critical: test split must NOT resize (full-res sliding window)
+    if split == 'test':
+        transform = get_test_augmentation()
+    else:
+        transform = get_val_augmentation(eval_cfg['IMAGE_SIZE'])
     # cases = ['cloud', 'fog', 'night', 'rain', 'sun']
     cases = ['motionblur', 'overexposure', 'underexposure', 'lidarjitter', 'eventlowres']
     # cases = [None] # all
@@ -146,15 +160,6 @@ def main(cfg):
         raise FileNotFoundError
     print(f"Evaluating {model_path}...")
 
-    # Determine eval mode based on split
-    # For test set: use TEST.MODE (default: slide for accuracy)
-    # For val set: use EVAL.MODE (default: whole for speed)
-    split = cfg.get('SPLIT', 'val')  # Can be overridden via config or will add CLI arg
-    if split == 'test':
-        eval_mode = cfg.get('TEST', {}).get('MODE', 'slide')
-    else:
-        eval_mode = eval_cfg.get('MODE', 'whole')
-    sliding = (eval_mode == 'slide')
     print(f"Split: {split}, Eval mode: {eval_mode} (sliding={sliding})")
 
     exp_time = time.strftime('%Y%m%d_%H%M%S', time.localtime())

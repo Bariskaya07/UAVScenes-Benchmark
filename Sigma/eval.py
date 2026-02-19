@@ -94,11 +94,14 @@ if __name__ == "__main__":
                         action='store_true')
     parser.add_argument('--save_path', '-p', default=None)
     parser.add_argument('--dataset_name', '-n', default='mfnet', type=str)
+    parser.add_argument('--split', default='val', choices=['val', 'test'],
+                        help='Dataset split to evaluate (val or test).')
 
     args = parser.parse_args()
     all_dev = parse_devices(args.devices)
     
     dataset_name = args.dataset_name
+    DatasetClass = RGBXDataset
     if dataset_name == 'mfnet':
         from configs.config_MFNet import config
     elif dataset_name == 'pst':
@@ -107,24 +110,38 @@ if __name__ == "__main__":
         from configs.config_nyu import config
     elif dataset_name == 'sun':
         from configs.config_sunrgbd import config
+    elif dataset_name == 'uavscenes':
+        from configs.config_UAVScenes import config
+        from dataloader.UAVScenesDataset import UAVScenesDataset
+        DatasetClass = UAVScenesDataset
     else:
         raise ValueError('Not a valid dataset name')
 
     network = segmodel(cfg=config, criterion=None, norm_layer=nn.BatchNorm2d)
-    data_setting = {'rgb_root': config.rgb_root_folder,
-                    'rgb_format': config.rgb_format,
-                    'gt_root': config.gt_root_folder,
-                    'gt_format': config.gt_format,
-                    'transform_gt': config.gt_transform,
-                    'x_root':config.x_root_folder,
-                    'x_format': config.x_format,
-                    'x_single_channel': config.x_is_single_channel,
-                    'class_names': config.class_names,
-                    'train_source': config.train_source,
-                    'eval_source': config.eval_source,
-                    'class_names': config.class_names}
-    val_pre = ValPre(config, resize=False)  # Eval uses full resolution for sliding window
-    dataset = RGBXDataset(data_setting, 'val', val_pre)
+    data_setting = {
+        'rgb_root': config.rgb_root_folder,
+        'rgb_format': config.rgb_format,
+        'gt_root': config.gt_root_folder,
+        'gt_format': config.gt_format,
+        'transform_gt': config.gt_transform,
+        'x_root': config.x_root_folder,
+        'x_format': config.x_format,
+        'x_single_channel': config.x_is_single_channel,
+        'class_names': config.class_names,
+        'train_source': config.train_source,
+        'eval_source': config.eval_source,
+        'dataset_path': getattr(config, 'dataset_path', ''),
+        'hag_max_meters': getattr(config, 'hag_max_meters', 50.0),
+        'aux_channels': getattr(config, 'aux_channels', 3),
+    }
+
+    # For UAVScenes, default to slide mode on test for fair benchmarking.
+    if dataset_name == 'uavscenes' and args.split == 'test':
+        config.eval_mode = getattr(config, 'test_mode', 'slide')
+
+    # Val: resize for fast evaluation; Test: keep full resolution for sliding-window.
+    val_pre = ValPre(config, resize=(args.split == 'val'))
+    dataset = DatasetClass(data_setting, args.split, val_pre)
  
     with torch.no_grad():
         segmentor = SegEvaluator(dataset, config.num_classes, config.norm_mean,

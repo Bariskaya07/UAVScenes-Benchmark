@@ -1,6 +1,7 @@
 import argparse
 import pprint
 import time
+import sys
 from importlib import import_module
 
 import torch
@@ -11,7 +12,7 @@ from tensorboardX import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel
 from val_mm import evaluate, evaluate_msf
 
-from utils.dataloader.dataloader import get_val_loader
+from utils.dataloader.dataloader import get_val_loader, get_test_loader
 from utils.dataloader.RGBXDataset import RGBXDataset
 from utils.engine.engine import Engine
 from utils.engine.logger import get_logger
@@ -32,6 +33,13 @@ parser.add_argument("--save_path", default=None)
 parser.add_argument("--checkpoint_dir")
 parser.add_argument("--continue_fpath")
 parser.add_argument("--sliding", default=False, action=argparse.BooleanOptionalAction)
+parser.add_argument(
+    "--split",
+    type=str,
+    default="val",
+    choices=["val", "test"],
+    help="Dataset split to evaluate (val or test). Use test for final full-res sliding-window evaluation.",
+)
 parser.add_argument("--compile", default=False, action=argparse.BooleanOptionalAction)
 parser.add_argument("--compile_mode", default="default")
 parser.add_argument("--syncbn", default=True, action=argparse.BooleanOptionalAction)
@@ -49,6 +57,8 @@ torch._dynamo.config.suppress_errors = True
 
 with Engine(custom_parser=parser) as engine:
     args = parser.parse_args()
+    if args.split == "test" and ("--sliding" not in sys.argv) and ("--no-sliding" not in sys.argv):
+        args.sliding = True
     config = getattr(import_module(args.config), "C")
     logger = get_logger(config.log_dir, config.log_file, rank=engine.local_rank)
     # check if pad_SUNRGBD is used correctly
@@ -69,13 +79,14 @@ with Engine(custom_parser=parser) as engine:
     else:
         val_batch_size = 8 * int(args.gpus)
 
-    if args.mst:
-        val_loader, val_sampler = get_val_loader(
+    if args.split == "test":
+        val_loader, val_sampler = get_test_loader(
             engine,
             RGBXDataset,
             config,
-            val_batch_size=val_batch_size,
+            test_batch_size=val_batch_size,
         )
+        logger.info(f"test dataset len:{len(val_loader) * int(args.gpus)}")
     else:
         val_loader, val_sampler = get_val_loader(
             engine,
@@ -83,7 +94,7 @@ with Engine(custom_parser=parser) as engine:
             config,
             val_batch_size=val_batch_size,
         )
-    logger.info(f"val dataset len:{len(val_loader) * int(args.gpus)}")
+        logger.info(f"val dataset len:{len(val_loader) * int(args.gpus)}")
 
     if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
         tb_dir = config.tb_dir + "/{}".format(time.strftime("%b%d_%d-%H-%M", time.localtime()))
