@@ -88,12 +88,20 @@ def build_dataloaders(cfg):
         ignore_label=cfg.dataset.ignore_label
     )
 
-    # Validation transform
+    # Validation transform (fast: resize to training size)
     val_transform = ValTransform(
         rgb_mean=cfg.normalization.rgb_mean,
         rgb_std=cfg.normalization.rgb_std,
         hag_mean=cfg.normalization.hag_mean,
         hag_std=cfg.normalization.hag_std
+    )
+
+    # Test transform (accurate: full resolution, no resize)
+    test_transform = TestTransform(
+        rgb_mean=cfg.normalization.rgb_mean,
+        rgb_std=cfg.normalization.rgb_std,
+        hag_mean=cfg.normalization.hag_mean,
+        hag_std=cfg.normalization.hag_std,
     )
 
     # Create datasets
@@ -114,7 +122,7 @@ def build_dataloaders(cfg):
     test_dataset = UAVScenesDataset(
         data_root=cfg.dataset.data_path,
         split='test',  # Test set only for final evaluation
-        transform=val_transform,
+        transform=test_transform,
         hag_max_height=cfg.hag.max_meters
     )
 

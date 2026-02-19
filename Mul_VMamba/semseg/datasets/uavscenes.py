@@ -143,8 +143,8 @@ class UAVScenes(Dataset):
     UAVScenes dataset for Mul-VMamba training.
 
     Supports RGB + HAG (Height Above Ground) multi-modal segmentation.
-    Returns format compatible with Mul-VMamba: (sample_list, label, rgb_path)
-    where sample_list = [image_tensor, hag_tensor]
+    Returns format compatible with this repo's evaluation/training scripts:
+    (sample_list, label) where sample_list = [image_tensor, hag_tensor]
 
     19 classes after remapping from 26 original classes.
     """
@@ -220,7 +220,7 @@ class UAVScenes(Dataset):
     def __len__(self) -> int:
         return len(self.files)
 
-    def __getitem__(self, index: int) -> Tuple[List[Tensor], Tensor, str]:
+    def __getitem__(self, index: int) -> Tuple[List[Tensor], Tensor]:
         scene, timestamp = self.files[index]
 
         # Build file paths
@@ -278,14 +278,19 @@ class UAVScenes(Dataset):
         # Apply transforms based on split
         if self.split == "train":
             sample = self.transform_tr(sample)
-        else:  # val or test
+        elif self.split == "val":
             sample = self.transform_val(sample)
+        else:  # test
+            # IMPORTANT: for fair benchmarking with CMNeXt/DFormerV2,
+            # do NOT resize/crop at dataset level. Sliding-window inference
+            # should run on the original full resolution.
+            sample = self.transform_test(sample)
 
         label = sample['label'].long()
 
-        # Return format: [modality tensors], label, rgb_path
+        # Return format: [modality tensors], label
         sample_list = [sample[k] for k in self.modals]
-        return sample_list, label, rgb_path
+        return sample_list, label
 
     def transform_tr(self, sample):
         """Training transforms: RandomHorizontalFlip, RandomScaleCrop, Normalize, ToTensor"""
@@ -302,6 +307,14 @@ class UAVScenes(Dataset):
         """Validation/Test transforms: FixScaleCrop, Normalize, ToTensor"""
         composed_transforms = Compose([
             FixScaleCrop(crop_size=self.crop_size),
+            Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ToTensor(),
+        ])
+        return composed_transforms(sample)
+
+    def transform_test(self, sample):
+        """Test transforms: Normalize, ToTensor (NO resize/crop)."""
+        composed_transforms = Compose([
             Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensor(),
         ])
