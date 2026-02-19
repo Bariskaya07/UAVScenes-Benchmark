@@ -335,6 +335,28 @@ class ValTransform:
         return self.transform(sample)
 
 
+class TestTransform:
+    """Test-time transform pipeline.
+
+    IMPORTANT: No resize.
+    This is intended for full-resolution sliding-window evaluation.
+    """
+
+    def __init__(
+        self,
+        rgb_mean=None,
+        rgb_std=None,
+        hag_mean=None,
+        hag_std=None,
+    ):
+        self.transform = Compose([
+            ToTensor(rgb_mean=rgb_mean, rgb_std=rgb_std, hag_mean=hag_mean, hag_std=hag_std)
+        ])
+
+    def __call__(self, sample):
+        return self.transform(sample)
+
+
 def get_train_transform(cfg=None):
     """Get training transform with config."""
     if cfg is None:

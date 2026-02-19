@@ -23,7 +23,7 @@ from tqdm import tqdm
 # Local imports
 from models import WeTr
 from datasets import UAVScenesDataset
-from utils.transforms import ValTransform
+from utils.transforms import ValTransform, TestTransform
 from utils.metrics import ConfusionMatrix, print_metrics, UAVSCENES_CLASSES
 from utils.helpers import setup_logger, sliding_window_inference
 
@@ -84,23 +84,28 @@ def build_model(cfg, checkpoint_path, device):
 
 
 def build_dataloader(cfg):
-    """Build validation dataloader."""
-    val_transform = ValTransform(
+    """Build test dataloader.
+
+    Note:
+        For fair comparison with CMNeXt, test evaluation should NOT resize
+        inputs/labels before sliding-window inference.
+    """
+    test_transform = TestTransform(
         rgb_mean=cfg.normalization.rgb_mean,
         rgb_std=cfg.normalization.rgb_std,
         hag_mean=cfg.normalization.hag_mean,
         hag_std=cfg.normalization.hag_std
     )
 
-    val_dataset = UAVScenesDataset(
+    test_dataset = UAVScenesDataset(
         data_root=cfg.dataset.data_path,
         split='test',
-        transform=val_transform,
+        transform=test_transform,
         hag_max_height=cfg.hag.max_meters
     )
 
     val_loader = DataLoader(
-        val_dataset,
+        test_dataset,
         batch_size=1,
         shuffle=False,
         num_workers=cfg.training.num_workers,
