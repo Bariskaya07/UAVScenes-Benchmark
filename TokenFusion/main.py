@@ -34,7 +34,7 @@ except ImportError:
 # Local imports
 from models import WeTr
 from datasets import UAVScenesDataset
-from utils.transforms import TrainTransform, ValTransform
+from utils.transforms import TrainTransform, ValTransform, TestTransform
 from utils.optimizer import PolyWarmupAdamW
 from utils.metrics import ConfusionMatrix, print_metrics, UAVSCENES_CLASSES, UAVScenesMetrics
 from utils.helpers import (
