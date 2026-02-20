@@ -62,7 +62,11 @@ except Exception:
                 x = self.act(x)
             return x
 from .modules import num_parallel
-from .swin_transformer import SwinTransformer
+
+try:
+    from .swin_transformer import SwinTransformer
+except Exception:
+    SwinTransformer = None
 
 
 class MLP(nn.Module):
@@ -176,6 +180,11 @@ class TransformerBackbone(nn.Module):
         super().__init__()
         out_indices = (0, 1, 2, 3)
         if backbone == "swin_tiny":
+            if SwinTransformer is None:
+                raise ModuleNotFoundError(
+                    "Swin backbone requested but SwinTransformer is not available. "
+                    "Add models/swin_transformer.py or use a MiT backbone (e.g. mit_b2)."
+                )
             backbone = SwinTransformer(
                 embed_dim=96,
                 depths=[2, 2, 6, 2],
@@ -190,6 +199,11 @@ class TransformerBackbone(nn.Module):
             embed_dim = 96
             backbone.init_weights(pretrained_backbone_path)
         elif backbone == "swin_small":
+            if SwinTransformer is None:
+                raise ModuleNotFoundError(
+                    "Swin backbone requested but SwinTransformer is not available. "
+                    "Add models/swin_transformer.py or use a MiT backbone (e.g. mit_b2)."
+                )
             backbone = SwinTransformer(
                 embed_dim=96,
                 depths=[2, 2, 18, 2],
@@ -204,6 +218,11 @@ class TransformerBackbone(nn.Module):
             embed_dim = 96
             backbone.init_weights(pretrained_backbone_path)
         elif backbone == "swin_large":
+            if SwinTransformer is None:
+                raise ModuleNotFoundError(
+                    "Swin backbone requested but SwinTransformer is not available. "
+                    "Add models/swin_transformer.py or use a MiT backbone (e.g. mit_b2)."
+                )
             backbone = SwinTransformer(
                 embed_dim=192,
                 depths=[2, 2, 18, 2],
@@ -218,6 +237,11 @@ class TransformerBackbone(nn.Module):
             embed_dim = 192
             backbone.init_weights(pretrained_backbone_path)
         elif backbone == "swin_large_window12":
+            if SwinTransformer is None:
+                raise ModuleNotFoundError(
+                    "Swin backbone requested but SwinTransformer is not available. "
+                    "Add models/swin_transformer.py or use a MiT backbone (e.g. mit_b2)."
+                )
             backbone = SwinTransformer(
                 pretrain_img_size=384,
                 embed_dim=192,
@@ -233,6 +257,11 @@ class TransformerBackbone(nn.Module):
             embed_dim = 192
             backbone.init_weights(pretrained_backbone_path)
         elif backbone == "swin_large_window12_to_1k":
+            if SwinTransformer is None:
+                raise ModuleNotFoundError(
+                    "Swin backbone requested but SwinTransformer is not available. "
+                    "Add models/swin_transformer.py or use a MiT backbone (e.g. mit_b2)."
+                )
             backbone = SwinTransformer(
                 pretrain_img_size=384,
                 embed_dim=192,
