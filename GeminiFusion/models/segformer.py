@@ -2,7 +2,65 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from . import mix_transformer
-from mmcv.cnn import ConvModule
+
+try:
+    from mmcv.cnn import ConvModule  # type: ignore
+except Exception:
+    class ConvModule(nn.Module):
+        def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=1,
+            norm_cfg=None,
+            act_cfg=None,
+        ):
+            super().__init__()
+            if act_cfg is None:
+                act_cfg = dict(type="ReLU", inplace=True)
+
+            self.conv = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                dilation=dilation,
+                groups=groups,
+                bias=(norm_cfg is None),
+            )
+
+            self.norm = None
+            if norm_cfg is not None:
+                norm_type = (norm_cfg.get("type") or "").upper()
+                if norm_type in {"BN", "BN2D", "BATCHNORM", "BATCHNORM2D"}:
+                    self.norm = nn.BatchNorm2d(out_channels)
+                    requires_grad = norm_cfg.get("requires_grad", True)
+                    for p in self.norm.parameters():
+                        p.requires_grad = bool(requires_grad)
+                else:
+                    raise NotImplementedError(f"Unsupported norm_cfg: {norm_cfg}")
+
+            self.act = None
+            act_type = (act_cfg.get("type") or "").upper()
+            if act_type in {"RELU"}:
+                self.act = nn.ReLU(inplace=bool(act_cfg.get("inplace", True)))
+            elif act_type in {"", "NONE"}:
+                self.act = None
+            else:
+                raise NotImplementedError(f"Unsupported act_cfg: {act_cfg}")
+
+        def forward(self, x):
+            x = self.conv(x)
+            if self.norm is not None:
+                x = self.norm(x)
+            if self.act is not None:
+                x = self.act(x)
+            return x
 from .modules import num_parallel
 from .swin_transformer import SwinTransformer
 
