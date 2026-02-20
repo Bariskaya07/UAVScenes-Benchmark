@@ -509,7 +509,14 @@ def train(
 
     did_log_once = getattr(train, "_did_log_once", False)
 
-    for i, sample in tqdm(enumerate(train_loader), total=len(train_loader)):
+    is_main = _is_main_process()
+    iterator = enumerate(train_loader)
+    pbar = None
+    if is_main:
+        pbar = tqdm(iterator, total=len(train_loader))
+        iterator = pbar
+
+    for i, sample in iterator:
         start = time.time()
         inputs = [sample[key].cuda().float() for key in input_types]
         target = sample["mask"].cuda().long()
@@ -606,6 +613,19 @@ def train(
         losses.update(loss.item())
         batch_time.update(time.time() - start)
 
+        if pbar is not None:
+            try:
+                lr0 = optimizer.param_groups[0].get("lr", None)
+                pbar.set_postfix(
+                    {
+                        "loss": f"{loss.item():.3f}",
+                        "avg": f"{losses.avg:.3f}",
+                        "lr": f"{lr0:.2e}" if isinstance(lr0, float) else "?",
+                    }
+                )
+            except Exception:
+                pass
+
         if (not did_log_once) and i == 0 and _is_main_process():
             try:
                 alloc = torch.cuda.memory_allocated()
@@ -622,6 +642,9 @@ def train(
 
             train._did_log_once = True
             did_log_once = True
+
+    if is_main:
+        print_log(f"[Train] epoch={epoch} avg_loss={losses.avg:.4f}")
 
 
 def sliding_window_inference(
