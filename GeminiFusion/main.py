@@ -266,6 +266,12 @@ def get_arguments():
         help="Number of images to save during validation",
     )
     parser.add_argument(
+        "--grad-clip",
+        type=float,
+        default=0.0,
+        help="Max grad norm (0 disables). Helps prevent NaNs/Inf.",
+    )
+    parser.add_argument(
         "-i",
         "--input",
         default=["rgb", "depth"],
@@ -520,6 +526,7 @@ def train(
     print_loss=False,
     amp_enabled=True,
     scaler=None,
+    grad_clip: float = 0.0,
 ):
     """Train for one epoch."""
     train_loader.dataset.set_stage("train")
@@ -615,9 +622,22 @@ def train(
             output = F.interpolate(
                 output, size=target.size()[1:], mode="bilinear", align_corners=False
             )
-            # Keep loss computation in FP32 for numerical stability.
-            soft_output = F.log_softmax(output.float(), dim=1)
-            loss += segm_crit(soft_output, target)
+            # Compute loss in FP32 on logits for numerical stability.
+            loss += segm_crit(output.float(), target)
+
+        if not torch.isfinite(loss):
+            if _is_main_process():
+                try:
+                    print_log(f"[NaN] Non-finite loss at epoch={epoch} iter={i}: loss={loss.item()}")
+                    for oi, out in enumerate(outputs):
+                        out_f = out.float()
+                        fin = torch.isfinite(out_f)
+                        print_log(
+                            f"  output[{oi}] finite={bool(fin.all())} min={out_f.min().item():.3e} max={out_f.max().item():.3e}"
+                        )
+                except Exception:
+                    pass
+            raise RuntimeError("Non-finite loss detected (NaN/Inf).")
 
         # Backward pass
         optimizer.zero_grad()
@@ -625,8 +645,19 @@ def train(
             if scaler is None:
                 raise ValueError("AMP enabled but GradScaler is None")
             scaler.scale(loss).backward()
+            if grad_clip and grad_clip > 0:
+                try:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(segmenter.parameters(), grad_clip)
+                except Exception:
+                    pass
         else:
             loss.backward()
+            if grad_clip and grad_clip > 0:
+                try:
+                    torch.nn.utils.clip_grad_norm_(segmenter.parameters(), grad_clip)
+                except Exception:
+                    pass
 
         if print_loss:
             print(f"step: {i:3d}: loss={loss:.2f}", flush=True)
@@ -1037,8 +1068,8 @@ def main():
 
     epoch_current = epoch_start
 
-    # Loss function
-    segm_crit = nn.NLLLoss(ignore_index=args.ignore_label).cuda()
+    # Loss function (more stable than log_softmax + NLLLoss)
+    segm_crit = nn.CrossEntropyLoss(ignore_index=args.ignore_label).cuda()
 
     # Saver
     saver = Saver(
@@ -1157,6 +1188,7 @@ def main():
                 args.print_loss,
                 amp_enabled=args.amp,
                 scaler=scaler,
+                grad_clip=args.grad_clip,
             )
 
             if (epoch + 1) % args.val_every == 0:
