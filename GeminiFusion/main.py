@@ -514,6 +514,19 @@ def train(
         inputs = [sample[key].cuda().float() for key in input_types]
         target = sample["mask"].cuda().long()
 
+        if i == 0 and _is_main_process():
+            try:
+                lr_groups = [pg.get("lr", None) for pg in optimizer.param_groups]
+                lr_groups_str = ", ".join(
+                    [
+                        f"g{idx}={lr:.2e}" if isinstance(lr, float) else f"g{idx}=?"
+                        for idx, lr in enumerate(lr_groups)
+                    ]
+                )
+                print_log(f"[LR] epoch={epoch} step0: {lr_groups_str}")
+            except Exception:
+                pass
+
         if (not did_log_once) and i == 0 and _is_main_process():
             try:
                 torch.cuda.reset_peak_memory_stats()
@@ -913,14 +926,36 @@ def main():
 
     # Training loop
     for task_idx in range(args.num_stages):
-        # Calculate warmup_iter from epochs (fair comparison with CMNeXt)
-        iters_per_epoch = len(train_loader) if 'train_loader' in dir() else 500
+        total_epoch = sum([args.num_epoch[idx] for idx in range(task_idx + 1)])
+        if epoch_start >= total_epoch:
+            continue
+
+        start = time.time()
+        torch.cuda.empty_cache()
+
+        # Create data loaders
+        if args.dataset == "uavscenes":
+            train_loader, val_loader, test_loader, train_sampler = create_uavscenes_loaders(
+                args, input_scale
+            )
+        else:
+            # For NYUDv2/SUNRGBD, use original loader
+            raise NotImplementedError(f"Dataset {args.dataset} not implemented")
+
+        # Calculate warmup_iter/max_iter using the real iters_per_epoch (fair comparison with CMNeXt)
+        iters_per_epoch = len(train_loader)
         warmup_epochs = getattr(args, 'warmup_epochs', 3)
         warmup_iter = warmup_epochs * iters_per_epoch
         total_epochs = sum(args.num_epoch)  # 60 epochs (3 stages × 20 epochs)
         max_iter = total_epochs * iters_per_epoch
         power = getattr(args, 'power', 0.9)  # CMNeXt paper setting
         warmup_ratio = getattr(args, 'warmup_ratio', 0.1)  # CMNeXt paper setting
+        if _is_main_process():
+            print_log(
+                f"[LR] stage={task_idx} iters_per_epoch={iters_per_epoch} warmup_epochs={warmup_epochs} "
+                f"warmup_iter={warmup_iter} total_epochs={total_epochs} max_iter={max_iter} "
+                f"warmup_ratio={warmup_ratio} power={power} base_lr={lrs[task_idx]:.2e}"
+            )
 
         optimizer = PolyWarmupAdamW(
             params=[
@@ -948,22 +983,6 @@ def main():
             warmup_ratio=warmup_ratio,
             power=power,
         )
-
-        total_epoch = sum([args.num_epoch[idx] for idx in range(task_idx + 1)])
-        if epoch_start >= total_epoch:
-            continue
-
-        start = time.time()
-        torch.cuda.empty_cache()
-
-        # Create data loaders
-        if args.dataset == "uavscenes":
-            train_loader, val_loader, test_loader, train_sampler = create_uavscenes_loaders(
-                args, input_scale
-            )
-        else:
-            # For NYUDv2/SUNRGBD, use original loader
-            raise NotImplementedError(f"Dataset {args.dataset} not implemented")
 
         # Evaluation only
         if args.evaluate:
