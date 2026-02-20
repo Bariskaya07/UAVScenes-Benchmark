@@ -41,6 +41,19 @@ def _resolve_uavscenes_root(data_root: str, probe_scene: str) -> str:
 
     data_root = os.path.abspath(os.path.expanduser(data_root))
 
+    # If the provided path doesn't exist (very common typo), try a few standard locations
+    # under the current user's home.
+    if not os.path.exists(data_root):
+        home = os.path.abspath(os.path.expanduser("~"))
+        for candidate in (
+            os.path.join(home, "data", "UAVScenesData"),
+            os.path.join(home, "datasets", "UAVScenesData"),
+            os.path.join(home, "UAVScenesData"),
+        ):
+            if _looks_like_uavscenes_root(candidate, probe_scene):
+                print(f"[UAVScenes] Resolved missing data_root '{data_root}' -> '{candidate}'")
+                return candidate
+
     # Fast path: already correct
     if _looks_like_uavscenes_root(data_root, probe_scene):
         return data_root
