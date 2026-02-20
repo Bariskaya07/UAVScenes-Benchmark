@@ -747,7 +747,16 @@ def validate(
         num_images = 0
         num_saved = 0
 
-        for i, sample in enumerate(val_loader):
+        iterator = enumerate(val_loader)
+        pbar = None
+        if _is_main_process():
+            try:
+                pbar = tqdm(iterator, total=len(val_loader), desc="Val", leave=False)
+                iterator = pbar
+            except Exception:
+                pbar = None
+
+        for i, sample in iterator:
             inputs = [sample[key].float().cuda() for key in input_types]
             target = sample["mask"]
             # target: (B, H, W)
@@ -775,6 +784,20 @@ def validate(
 
             end_time = time.time()
             all_times += end_time - start_time
+
+            if pbar is not None and _is_main_process():
+                try:
+                    pbar.set_postfix({"imgs": num_images + gt_batch.shape[0], "lat": f"{(end_time-start_time):.3f}s"})
+                except Exception:
+                    pass
+
+            if _is_main_process() and (i == 0 or (i + 1) % 50 == 0):
+                try:
+                    print_log(
+                        f"[Val] step={i+1}/{len(val_loader)} batch={gt_batch.shape[0]} total_imgs={num_images + gt_batch.shape[0]}"
+                    )
+                except Exception:
+                    pass
 
             # Process outputs for confusion matrix
             if eval_mode == 'slide':
