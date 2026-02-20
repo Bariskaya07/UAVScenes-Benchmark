@@ -28,6 +28,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
 
 from utils import *
 import utils.helpers as helpers
@@ -138,6 +139,22 @@ def get_arguments():
         default=True,
         help="Freeze batch normalization",
     )
+
+    # Precision / memory
+    amp_group = parser.add_mutually_exclusive_group()
+    amp_group.add_argument(
+        "--amp",
+        dest="amp",
+        action="store_true",
+        help="Enable mixed precision training (AMP)",
+    )
+    amp_group.add_argument(
+        "--no-amp",
+        dest="amp",
+        action="store_false",
+        help="Disable mixed precision training (force FP32)",
+    )
+    parser.set_defaults(amp=True)
     parser.add_argument(
         "--num-epoch",
         type=int,
@@ -383,6 +400,8 @@ def train(
     segm_crit,
     freeze_bn,
     print_loss=False,
+    amp_enabled=True,
+    scaler=None,
 ):
     """Train for one epoch."""
     train_loader.dataset.set_stage("train")
@@ -402,7 +421,8 @@ def train(
         target = sample["mask"].cuda().long()
 
         # Forward pass
-        outputs, masks = segmenter(inputs)
+        with autocast(enabled=amp_enabled):
+            outputs, masks = segmenter(inputs)
 
         # Compute loss
         loss = 0
@@ -410,22 +430,34 @@ def train(
             output = F.interpolate(
                 output, size=target.size()[1:], mode="bilinear", align_corners=False
             )
-            soft_output = F.log_softmax(output, dim=1)
+            # Keep loss computation in FP32 for numerical stability.
+            soft_output = F.log_softmax(output.float(), dim=1)
             loss += segm_crit(soft_output, target)
 
         # Backward pass
         optimizer.zero_grad()
-        loss.backward()
+        if amp_enabled:
+            if scaler is None:
+                raise ValueError("AMP enabled but GradScaler is None")
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
 
         if print_loss:
             print(f"step: {i:3d}: loss={loss:.2f}", flush=True)
 
-        optimizer.step()
+        if amp_enabled:
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
         losses.update(loss.item())
         batch_time.update(time.time() - start)
 
 
-def sliding_window_inference(segmenter, inputs, num_classes, window_size=768, stride=512):
+def sliding_window_inference(
+    segmenter, inputs, num_classes, window_size=768, stride=512, amp_enabled=True
+):
     """Sliding window inference for full resolution images."""
     B, C, H, W = inputs[0].shape
     device = inputs[0].device
@@ -452,7 +484,8 @@ def sliding_window_inference(segmenter, inputs, num_classes, window_size=768, st
             crop_inputs = [x[:, :, h_start:h_end, w_start:w_end] for x in inputs]
 
             # Forward pass
-            outputs, _ = segmenter(crop_inputs)
+            with autocast(enabled=amp_enabled):
+                outputs, _ = segmenter(crop_inputs)
             crop_output = outputs[-1]  # Use ensemble output
 
             # Resize if needed
@@ -480,7 +513,7 @@ def sliding_window_inference(segmenter, inputs, num_classes, window_size=768, st
 
 def validate(
     segmenter, input_types, val_loader, epoch, save_dir, num_classes=19, save_image=0,
-    eval_mode='whole'
+    eval_mode='whole', amp_enabled=True
 ):
     """Validate model.
 
@@ -512,13 +545,19 @@ def validate(
             if eval_mode == 'slide':
                 # Sliding window inference (accurate but slow)
                 ensemble_output = sliding_window_inference(
-                    segmenter, inputs, num_classes, window_size=768, stride=512
+                    segmenter,
+                    inputs,
+                    num_classes,
+                    window_size=768,
+                    stride=512,
+                    amp_enabled=amp_enabled,
                 )
                 # For slide mode, we only get ensemble output
                 outputs_for_conf = [ensemble_output]
             else:
                 # Whole image inference (fast, uses resized input from dataloader)
-                outputs, _ = segmenter(inputs)
+                with autocast(enabled=amp_enabled):
+                    outputs, _ = segmenter(inputs)
                 outputs_for_conf = outputs
 
             end_time = time.time()
@@ -651,6 +690,9 @@ def main():
         args.drop_rate,
     )
 
+    # AMP scaler (enabled/disabled via args.amp)
+    scaler = GradScaler(enabled=args.amp)
+
     total_params = compute_params(segmenter)
     trainable_params = sum(p.numel() for p in segmenter.parameters() if p.requires_grad)
     print_log(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable")
@@ -775,6 +817,7 @@ def main():
                 ckpt_dir,
                 num_classes=args.num_classes,
                 save_image=args.save_image,
+                amp_enabled=args.amp,
             )
 
         print_log(f"Training Stage {task_idx}")
@@ -792,6 +835,8 @@ def main():
                 segm_crit,
                 args.freeze_bn,
                 args.print_loss,
+                amp_enabled=args.amp,
+                scaler=scaler,
             )
 
             if (epoch + 1) % args.val_every == 0:
@@ -802,6 +847,7 @@ def main():
                     epoch_current,
                     ckpt_dir,
                     args.num_classes,
+                    amp_enabled=args.amp,
                 )
                 saver.save(
                     miou,
@@ -849,7 +895,12 @@ def main():
             start_time = time.time()
 
             ensemble_output = sliding_window_inference(
-                no_ddp_segmenter, inputs, args.num_classes, window_size=768, stride=512
+                no_ddp_segmenter,
+                inputs,
+                args.num_classes,
+                window_size=768,
+                stride=512,
+                amp_enabled=args.amp,
             )
 
             torch.cuda.synchronize()
