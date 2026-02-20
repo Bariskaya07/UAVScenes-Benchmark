@@ -758,27 +758,33 @@ def validate(
             # Process outputs for confusion matrix
             if eval_mode == 'slide':
                 # Only process ensemble output for slide mode
-                output = ensemble_output[0].data.cpu().numpy()
-                output = cv2.resize(
-                    output[:num_classes].transpose(1, 2, 0),
-                    target.size()[1:][::-1],
-                    interpolation=cv2.INTER_CUBIC,
-                ).argmax(axis=2).astype(np.uint8)
-                conf_mat[-1] += confusion_matrix(gt[gt_idx], output[gt_idx], num_classes)
+                label_size = target.shape[1:]
+                # ensemble_output: (B, C, H, W)
+                output_up = F.interpolate(
+                    ensemble_output[:, :num_classes],
+                    size=label_size,
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                pred = output_up.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)
+                conf_mat[-1] += confusion_matrix(gt[gt_idx], pred[gt_idx], num_classes)
             else:
+                label_size = target.shape[1:]
+                last_pred = None
                 for idx, output in enumerate(outputs_for_conf):
-                    output = (
-                        cv2.resize(
-                            output[0, :num_classes].data.cpu().numpy().transpose(1, 2, 0),
-                            target.size()[1:][::-1],
-                            interpolation=cv2.INTER_CUBIC,
-                        )
-                        .argmax(axis=2)
-                        .astype(np.uint8)
+                    if idx >= len(conf_mat):
+                        break
+                    output_up = F.interpolate(
+                        output[:, :num_classes],
+                        size=label_size,
+                        mode="bilinear",
+                        align_corners=False,
                     )
+                    pred = output_up.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)
+                    last_pred = pred
                     # Compute IoU
                     conf_mat[idx] += confusion_matrix(
-                        gt[gt_idx], output[gt_idx], num_classes
+                        gt[gt_idx], pred[gt_idx], num_classes
                     )
 
                 if _is_main_process() and (i < save_image or save_image == -1):
@@ -786,7 +792,7 @@ def validate(
                         inputs[0].data.cpu().numpy(),
                         inputs[1].data.cpu().numpy(),
                         sample["mask"].data.cpu().numpy(),
-                        output[np.newaxis, :],
+                        (last_pred if last_pred is not None else gt)[np.newaxis, :],
                     )
                     imgs_folder = os.path.join(save_dir, "imgs")
                     os.makedirs(imgs_folder, exist_ok=True)
