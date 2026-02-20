@@ -417,6 +417,17 @@ def create_uavscenes_loaders(args, input_scale):
     else:
         train_sampler = None
 
+    if dist.is_initialized():
+        val_sampler = DistributedSampler(
+            validset, dist.get_world_size(), dist.get_rank(), shuffle=False
+        )
+        test_sampler = DistributedSampler(
+            testset, dist.get_world_size(), dist.get_rank(), shuffle=False
+        )
+    else:
+        val_sampler = None
+        test_sampler = None
+
     # Create loaders
     train_loader = DataLoader(
         trainset,
@@ -434,6 +445,7 @@ def create_uavscenes_loaders(args, input_scale):
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
+        sampler=val_sampler,
     )
 
     test_loader = DataLoader(
@@ -442,6 +454,7 @@ def create_uavscenes_loaders(args, input_scale):
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
+        sampler=test_sampler,
     )
 
     return train_loader, val_loader, test_loader, train_sampler
@@ -726,7 +739,8 @@ def validate(
     for _ in range(len(input_types) + 1):
         conf_mat.append(np.zeros((num_classes, num_classes), dtype=int))
 
-    print_log(f"Evaluating with mode: {eval_mode}")
+    if _is_main_process():
+        print_log(f"Evaluating with mode: {eval_mode}")
 
     with torch.no_grad():
         all_times = 0
@@ -826,7 +840,15 @@ def validate(
             num_images += gt_batch.shape[0]
 
         latency = all_times / max(1, num_images)
-        print(f"all_times: {all_times}  num_images: {num_images}  latency: {latency}")
+        if _is_main_process():
+            print(f"all_times: {all_times}  num_images: {num_images}  latency: {latency}")
+
+    # Aggregate confusion matrices across ranks for correct multi-GPU evaluation.
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        for idx in range(len(conf_mat)):
+            t = torch.as_tensor(conf_mat[idx], dtype=torch.int64, device="cuda")
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
+            conf_mat[idx] = t.cpu().numpy()
 
     # UAVScenes class names
     uavscenes_classes = [
@@ -836,29 +858,39 @@ def validate(
         "paved_walk", "sedan", "truck"
     ]
 
-    # Print results
-    for idx, input_type in enumerate(input_types + ["ens"]):
-        glob, mean, iou = getScores(conf_mat[idx])
-        best_iou_note = ""
-        if iou > best_iou:
-            best_iou = iou
-            best_iou_note = "    (best)"
+    iou_out = 0.0
+    if _is_main_process():
+        # Print results
+        for idx, input_type in enumerate(input_types + ["ens"]):
+            glob, mean, iou = getScores(conf_mat[idx])
+            iou_out = float(iou)
+            best_iou_note = ""
+            if iou > best_iou:
+                best_iou = iou
+                best_iou_note = "    (best)"
 
-        input_type_str = f"({input_type})"
-        print_log(
-            f"Epoch {epoch:<4d} {input_type_str:<7s}   glob_acc={glob:<5.2f}    mean_acc={mean:<5.2f}    IoU={iou:<5.2f}        {best_iou_note}"
-        )
+            input_type_str = f"({input_type})"
+            print_log(
+                f"Epoch {epoch:<4d} {input_type_str:<7s}   glob_acc={glob:<5.2f}    mean_acc={mean:<5.2f}    IoU={iou:<5.2f}        {best_iou_note}"
+            )
 
-        # Print per-class IoU for ensemble (final) output
-        if input_type == "ens":
-            per_class_iou = getPerClassIoU(conf_mat[idx])
-            print_log("\nPer-class IoU:")
-            for i, cls_name in enumerate(uavscenes_classes):
-                marker = "[D]" if i >= 17 else "[S]"
-                print_log(f"  {marker} {cls_name:<18} {per_class_iou[i]:>6.2f}%")
+            # Print per-class IoU for ensemble (final) output
+            if input_type == "ens":
+                per_class_iou = getPerClassIoU(conf_mat[idx])
+                print_log("\nPer-class IoU:")
+                for i, cls_name in enumerate(uavscenes_classes):
+                    marker = "[D]" if i >= 17 else "[S]"
+                    print_log(f"  {marker} {cls_name:<18} {per_class_iou[i]:>6.2f}%")
 
-    print_log("")
-    return iou
+        print_log("")
+
+    # Make sure all ranks return the same scalar.
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        iou_tensor = torch.tensor([iou_out], dtype=torch.float32, device="cuda")
+        dist.broadcast(iou_tensor, src=0)
+        iou_out = float(iou_tensor.item())
+
+    return iou_out
 
 
 def main():
