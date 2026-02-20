@@ -131,6 +131,12 @@ def get_arguments():
         help="Batch size (default: 8 for fair comparison)",
     )
     parser.add_argument(
+        "--val-batch-size",
+        type=int,
+        default=1,
+        help="Validation batch size (default: 1). Increase for faster eval if VRAM allows.",
+    )
+    parser.add_argument(
         "--num-workers",
         type=int,
         default=8,
@@ -424,7 +430,7 @@ def create_uavscenes_loaders(args, input_scale):
 
     val_loader = DataLoader(
         validset,
-        batch_size=1,
+        batch_size=args.val_batch_size,
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
@@ -724,13 +730,14 @@ def validate(
 
     with torch.no_grad():
         all_times = 0
-        count = 0
+        num_images = 0
+        num_saved = 0
 
         for i, sample in enumerate(val_loader):
             inputs = [sample[key].float().cuda() for key in input_types]
             target = sample["mask"]
-            gt = target[0].data.cpu().numpy().astype(np.uint8)
-            gt_idx = gt < num_classes  # Ignore labels >= num_classes
+            # target: (B, H, W)
+            gt_batch = target.data.cpu().numpy().astype(np.uint8)
 
             start_time = time.time()
 
@@ -766,11 +773,15 @@ def validate(
                     mode="bilinear",
                     align_corners=False,
                 )
-                pred = output_up.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)
-                conf_mat[-1] += confusion_matrix(gt[gt_idx], pred[gt_idx], num_classes)
+                pred_batch = output_up.argmax(dim=1).cpu().numpy().astype(np.uint8)
+                for b in range(pred_batch.shape[0]):
+                    gt = gt_batch[b]
+                    pred = pred_batch[b]
+                    gt_idx = gt < num_classes  # Ignore labels >= num_classes
+                    conf_mat[-1] += confusion_matrix(gt[gt_idx], pred[gt_idx], num_classes)
             else:
                 label_size = target.shape[1:]
-                last_pred = None
+                last_pred_batch = None
                 for idx, output in enumerate(outputs_for_conf):
                     if idx >= len(conf_mat):
                         break
@@ -780,31 +791,42 @@ def validate(
                         mode="bilinear",
                         align_corners=False,
                     )
-                    pred = output_up.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)
-                    last_pred = pred
-                    # Compute IoU
-                    conf_mat[idx] += confusion_matrix(
-                        gt[gt_idx], pred[gt_idx], num_classes
-                    )
+                    pred_batch = output_up.argmax(dim=1).cpu().numpy().astype(np.uint8)
+                    last_pred_batch = pred_batch
 
-                if _is_main_process() and (i < save_image or save_image == -1):
+                    for b in range(pred_batch.shape[0]):
+                        gt = gt_batch[b]
+                        pred = pred_batch[b]
+                        gt_idx = gt < num_classes  # Ignore labels >= num_classes
+                        conf_mat[idx] += confusion_matrix(gt[gt_idx], pred[gt_idx], num_classes)
+
+                if _is_main_process() and (save_image == -1 or num_saved < save_image):
+                    # Save only the first item in the batch to keep output predictable.
+                    b = 0
+                    gt0 = gt_batch[b]
+                    pred0 = (
+                        last_pred_batch[b]
+                        if last_pred_batch is not None
+                        else gt0
+                    )
                     img = make_validation_img(
-                        inputs[0].data.cpu().numpy(),
-                        inputs[1].data.cpu().numpy(),
-                        sample["mask"].data.cpu().numpy(),
-                        (last_pred if last_pred is not None else gt)[np.newaxis, :],
+                        inputs[0][b:b+1].data.cpu().numpy(),
+                        inputs[1][b:b+1].data.cpu().numpy(),
+                        sample["mask"][b:b+1].data.cpu().numpy(),
+                        pred0[np.newaxis, :],
                     )
                     imgs_folder = os.path.join(save_dir, "imgs")
                     os.makedirs(imgs_folder, exist_ok=True)
                     cv2.imwrite(
-                        os.path.join(imgs_folder, f"validate_{i}.png"),
+                        os.path.join(imgs_folder, f"validate_{num_saved}.png"),
                         img[:, :, ::-1],
                     )
+                    num_saved += 1
 
-            count += 1
+            num_images += gt_batch.shape[0]
 
-        latency = all_times / count
-        print(f"all_times: {all_times}  count: {count}  latency: {latency}")
+        latency = all_times / max(1, num_images)
+        print(f"all_times: {all_times}  num_images: {num_images}  latency: {latency}")
 
     # UAVScenes class names
     uavscenes_classes = [
