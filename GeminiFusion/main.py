@@ -288,6 +288,12 @@ def create_uavscenes_loaders(args, input_scale):
 
     print_log(f"Created train set {len(trainset)} examples, val set {len(validset)} examples, test set {len(testset)} examples")
 
+    if len(trainset) == 0 or len(validset) == 0 or len(testset) == 0:
+        raise ValueError(
+            "UAVScenesDataset returned 0 samples. This usually means --train-dir is wrong or the dataset folder structure doesn't match. "
+            f"Got data_root='{args.train_dir}'. Expected e.g. '{args.train_dir}/interval5_CAM_LIDAR/...' and '{args.train_dir}/interval5_CAM_label/...' and HAG under '{args.train_dir}/interval5_HAG_CSF/' (or 'interval5_HAG/')."
+        )
+
     # Create samplers
     if dist.is_initialized():
         train_sampler = DistributedSampler(

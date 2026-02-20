@@ -207,27 +207,58 @@ class UAVScenesDataset(Dataset):
         """Build list of (rgb_path, hag_path, label_path) tuples."""
         samples = []
 
+        def first_existing_dir(*candidates):
+            for candidate in candidates:
+                if os.path.isdir(candidate):
+                    return candidate
+            return None
+
         for scene in scenes:
             # RGB path pattern
-            rgb_dir = os.path.join(
-                self.data_root,
-                "interval5_CAM_LIDAR", "interval5_CAM_LIDAR",
-                scene, "interval5_CAM"
+            rgb_dir = first_existing_dir(
+                os.path.join(
+                    self.data_root,
+                    "interval5_CAM_LIDAR", "interval5_CAM_LIDAR",
+                    scene, "interval5_CAM"
+                ),
+                os.path.join(
+                    self.data_root,
+                    "interval5_CAM_LIDAR",
+                    scene, "interval5_CAM"
+                ),
             )
+
+            if rgb_dir is None:
+                print(f"Warning: RGB directory not found for scene '{scene}' under data_root='{self.data_root}'")
+                continue
 
             # HAG path pattern (CSF version)
-            hag_dir = os.path.join(
-                self.data_root,
-                "interval5_HAG_CSF",
-                scene
+            hag_dir = first_existing_dir(
+                os.path.join(self.data_root, "interval5_HAG_CSF", scene),
+                os.path.join(self.data_root, "interval5_HAG", scene),
             )
 
+            if hag_dir is None:
+                print(f"Warning: HAG directory not found for scene '{scene}' (tried interval5_HAG_CSF and interval5_HAG)")
+                continue
+
             # Label path pattern
-            label_dir = os.path.join(
-                self.data_root,
-                "interval5_CAM_label", "interval5_CAM_label",
-                scene, "interval5_CAM_label_id"
+            label_dir = first_existing_dir(
+                os.path.join(
+                    self.data_root,
+                    "interval5_CAM_label", "interval5_CAM_label",
+                    scene, "interval5_CAM_label_id"
+                ),
+                os.path.join(
+                    self.data_root,
+                    "interval5_CAM_label",
+                    scene, "interval5_CAM_label_id"
+                ),
             )
+
+            if label_dir is None:
+                print(f"Warning: Label directory not found for scene '{scene}'")
+                continue
 
             # Find all RGB images
             rgb_files = sorted(glob.glob(os.path.join(rgb_dir, "*.jpg")))
