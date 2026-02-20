@@ -738,7 +738,7 @@ def validate(
     Args:
         eval_mode: 'whole' for fast validation (resize), 'slide' for accurate (sliding window)
     """
-    global best_iou
+    global best_miou
     val_loader.dataset.set_stage("val")
     segmenter.eval()
 
@@ -903,44 +903,46 @@ def validate(
         "paved_walk", "sedan", "truck"
     ]
 
-    iou_out = 0.0
+    ens_miou_out = 0.0
     if _is_main_process():
-        # Print results
         for idx, input_type in enumerate(input_types + ["ens"]):
             glob, mean, iou = getScores(conf_mat[idx])
-            iou_out = float(iou)
-            best_iou_note = ""
-            if iou > best_iou:
-                best_iou = iou
-                best_iou_note = "    (best)"
+            miou = float(iou)  # percent
+            best_note = ""
+            if input_type == "ens":
+                ens_miou_out = miou
+                if miou > best_miou:
+                    best_miou = miou
+                    best_note = "    (best)"
 
             input_type_str = f"({input_type})"
             print_log(
-                f"Epoch {epoch:<4d} {input_type_str:<7s}   glob_acc={glob:<5.2f}    mean_acc={mean:<5.2f}    IoU={iou:<5.2f}        {best_iou_note}"
+                f"Epoch {epoch:<4d} {input_type_str:<7s}   glob_acc={glob:<5.2f}    mean_acc={mean:<5.2f}    mIoU={miou:<5.2f}        {best_note}"
             )
 
-            # Print per-class IoU for ensemble (final) output
             if input_type == "ens":
                 per_class_iou = getPerClassIoU(conf_mat[idx])
                 print_log("\nPer-class IoU:")
-                for i, cls_name in enumerate(uavscenes_classes):
-                    marker = "[D]" if i >= 17 else "[S]"
-                    print_log(f"  {marker} {cls_name:<18} {per_class_iou[i]:>6.2f}%")
+                for class_idx, cls_name in enumerate(uavscenes_classes):
+                    marker = "[D]" if class_idx >= 17 else "[S]"
+                    print_log(
+                        f"  {marker} {cls_name:<18} {per_class_iou[class_idx]:>6.2f}%"
+                    )
 
         print_log("")
 
     # Make sure all ranks return the same scalar.
     if dist.is_initialized() and dist.get_world_size() > 1:
-        iou_tensor = torch.tensor([iou_out], dtype=torch.float32, device="cuda")
-        dist.broadcast(iou_tensor, src=0)
-        iou_out = float(iou_tensor.item())
+        miou_tensor = torch.tensor([ens_miou_out], dtype=torch.float32, device="cuda")
+        dist.broadcast(miou_tensor, src=0)
+        ens_miou_out = float(miou_tensor.item())
 
-    return iou_out
+    return ens_miou_out
 
 
 def main():
-    global args, best_iou
-    best_iou = 0
+    global args, best_miou
+    best_miou = 0.0
     args = get_arguments()
 
     # Dataset configuration
@@ -1127,7 +1129,7 @@ def main():
                     progress_mode=args.val_progress,
                 )
                 if _is_main_process():
-                    print_log(f"Evaluation finished. IoU={iou:.2f}")
+                    print_log(f"Evaluation finished. mIoU={iou:.2f}")
                 return
             finally:
                 try:
