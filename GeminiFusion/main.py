@@ -20,6 +20,7 @@ import random
 import time
 import warnings
 import datetime
+import functools
 
 warnings.filterwarnings("ignore")
 
@@ -39,6 +40,15 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from utils.augmentations_mm import *
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+try:
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    from torch.distributed.fsdp import ShardingStrategy, CPUOffload, BackwardPrefetch
+    from torch.distributed.fsdp.api import FullStateDictConfig, StateDictType
+    from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+    FSDP_AVAILABLE = True
+except Exception:
+    FSDP_AVAILABLE = False
 
 try:
     from fvcore.nn import FlopCountAnalysis
@@ -148,6 +158,33 @@ def get_arguments():
         help="Freeze batch normalization",
     )
 
+    # Distributed / FSDP
+    parser.add_argument(
+        "--fsdp",
+        action="store_true",
+        default=False,
+        help="Enable Fully Sharded Data Parallel (FSDP) when launched with torchrun",
+    )
+    parser.add_argument(
+        "--fsdp-auto-wrap",
+        type=str,
+        default="size",
+        choices=["none", "size"],
+        help="FSDP auto-wrapping policy",
+    )
+    parser.add_argument(
+        "--fsdp-min-params",
+        type=int,
+        default=1_000_000,
+        help="Min parameter count for size-based auto-wrap",
+    )
+    parser.add_argument(
+        "--fsdp-cpu-offload",
+        action="store_true",
+        default=False,
+        help="Offload parameters to CPU (usually slower; can reduce VRAM)",
+    )
+
     # Precision / memory
     amp_group = parser.add_mutually_exclusive_group()
     amp_group.add_argument(
@@ -255,6 +292,53 @@ def create_segmenter(num_classes, gpu, backbone, n_heads, dpr, drop_rate):
     assert torch.cuda.is_available()
     segmenter.to("cuda:" + str(gpu))
     return segmenter, param_groups
+
+
+def _maybe_wrap_fsdp(segmenter: nn.Module, gpu: int, args: argparse.Namespace) -> nn.Module:
+    if not args.fsdp:
+        return segmenter
+    if not dist.is_initialized() or dist.get_world_size() <= 1:
+        print_log("[FSDP] --fsdp set but distributed is not initialized; running single-GPU.")
+        return segmenter
+    if not FSDP_AVAILABLE:
+        raise RuntimeError(
+            "FSDP requested but not available in this PyTorch build. "
+            "Install a PyTorch version with torch.distributed.fsdp support."
+        )
+
+    auto_wrap_policy = None
+    if args.fsdp_auto_wrap == "size":
+        auto_wrap_policy = functools.partial(
+            size_based_auto_wrap_policy, min_num_params=int(args.fsdp_min_params)
+        )
+
+    cpu_offload = CPUOffload(offload_params=True) if args.fsdp_cpu_offload else None
+
+    fsdp_segmenter = FSDP(
+        segmenter,
+        auto_wrap_policy=auto_wrap_policy,
+        sharding_strategy=ShardingStrategy.FULL_SHARD,
+        backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+        cpu_offload=cpu_offload,
+        use_orig_params=True,
+        device_id=torch.device(f"cuda:{gpu}"),
+    )
+    print_log(
+        f"[FSDP] Enabled: world_size={dist.get_world_size()} auto_wrap={args.fsdp_auto_wrap} "
+        f"min_params={args.fsdp_min_params} cpu_offload={args.fsdp_cpu_offload}"
+    )
+    return fsdp_segmenter
+
+
+def _segmenter_state_dict_for_save(segmenter: nn.Module, args: argparse.Namespace) -> dict:
+    if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
+        # Full (unsharded) state dict on rank0 only; offload to CPU to save VRAM.
+        full_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        with FSDP.state_dict_type(segmenter, StateDictType.FULL_STATE_DICT, full_cfg):
+            return segmenter.state_dict()
+    if isinstance(segmenter, DDP):
+        return segmenter.module.state_dict()
+    return segmenter.state_dict()
 
 
 def create_uavscenes_loaders(args, input_scale):
@@ -661,7 +745,7 @@ def validate(
                         gt[gt_idx], output[gt_idx], num_classes
                     )
 
-                if i < save_image or save_image == -1:
+                if _is_main_process() and (i < save_image or save_image == -1):
                     img = make_validation_img(
                         inputs[0].data.cpu().numpy(),
                         inputs[1].data.cpu().numpy(),
@@ -741,7 +825,8 @@ def main():
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # Setup logger
-    helpers.logger = open(os.path.join(ckpt_dir, "log.txt"), "w+")
+    log_path = os.path.join(ckpt_dir, "log.txt") if _is_main_process() else os.devnull
+    helpers.logger = open(log_path, "w+")
     print_log(" ".join(sys.argv))
 
     # Set random seeds
@@ -797,11 +882,12 @@ def main():
             print_log(f"=> no checkpoint found at '{args.resume}'")
             return
 
-    # Setup DDP
-    no_ddp_segmenter = segmenter
-    if dist.is_initialized():
+    # Setup distributed wrapper (FSDP preferred; otherwise DDP)
+    if args.fsdp:
+        segmenter = _maybe_wrap_fsdp(segmenter, gpu, args)
+    elif dist.is_initialized():
         segmenter = DDP(
-            segmenter, device_ids=[gpu], output_device=0, find_unused_parameters=False
+            segmenter, device_ids=[gpu], output_device=gpu, find_unused_parameters=False
         )
 
     epoch_current = epoch_start
@@ -881,8 +967,8 @@ def main():
 
         # Evaluation only
         if args.evaluate:
-            return validate(
-                no_ddp_segmenter,
+            iou = validate(
+                segmenter,
                 args.input,
                 val_loader,
                 0,
@@ -891,6 +977,10 @@ def main():
                 save_image=args.save_image,
                 amp_enabled=args.amp,
             )
+            if _is_main_process():
+                print_log(f"Evaluation finished. IoU={iou:.2f}")
+            cleanup_ddp()
+            return
 
         print_log(f"Training Stage {task_idx}")
 
@@ -913,7 +1003,7 @@ def main():
 
             if (epoch + 1) % args.val_every == 0:
                 miou = validate(
-                    no_ddp_segmenter,
+                    segmenter,
                     args.input,
                     val_loader,
                     epoch_current,
@@ -921,10 +1011,22 @@ def main():
                     args.num_classes,
                     amp_enabled=args.amp,
                 )
-                saver.save(
-                    miou,
-                    {"segmenter": segmenter.state_dict(), "epoch_start": epoch_current},
-                )
+                if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
+                    state_to_save = _segmenter_state_dict_for_save(segmenter, args)
+                    if _is_main_process():
+                        saver.save(
+                            miou,
+                            {"segmenter": state_to_save, "epoch_start": epoch_current},
+                        )
+                else:
+                    if _is_main_process():
+                        saver.save(
+                            miou,
+                            {
+                                "segmenter": _segmenter_state_dict_for_save(segmenter, args),
+                                "epoch_start": epoch_current,
+                            },
+                        )
 
             epoch_current += 1
 
@@ -945,12 +1047,20 @@ def main():
         print_log(f"Loading best checkpoint: {best_ckpt}")
         ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=False)
         if "segmenter" in ckpt:
-            no_ddp_segmenter.load_state_dict(ckpt["segmenter"], strict=False)
+            if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
+                # FULL state dict load: all ranks must participate.
+                full_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=False)
+                with FSDP.state_dict_type(segmenter, StateDictType.FULL_STATE_DICT, full_cfg):
+                    segmenter.load_state_dict(ckpt["segmenter"], strict=False)
+            elif isinstance(segmenter, DDP):
+                segmenter.module.load_state_dict(ckpt["segmenter"], strict=False)
+            else:
+                segmenter.load_state_dict(ckpt["segmenter"], strict=False)
 
     # Evaluate on test set with slide mode using UAVScenesMetrics for detailed output
     from utils.metrics import UAVScenesMetrics
 
-    no_ddp_segmenter.eval()
+    segmenter.eval()
     test_metrics = UAVScenesMetrics(num_classes=args.num_classes, ignore_label=255)
 
     print_log("Running test evaluation with sliding window inference...")
@@ -967,7 +1077,7 @@ def main():
             start_time = time.time()
 
             ensemble_output = sliding_window_inference(
-                no_ddp_segmenter,
+                segmenter,
                 inputs,
                 args.num_classes,
                 window_size=768,
@@ -984,7 +1094,7 @@ def main():
 
             test_metrics.update(pred, gt)
 
-            if (i + 1) % 50 == 0:
+            if (i + 1) % 50 == 0 and _is_main_process():
                 print_log(f'Test: {i + 1}/{len(test_loader)} samples')
 
     # Calculate inference speed
@@ -992,16 +1102,19 @@ def main():
     fps = num_images / total_time
 
     # Print detailed results
-    test_metrics.print_results()
+    if _is_main_process():
+        test_metrics.print_results()
 
     # Print and save inference speed
-    print_log(f"\nInference speed:")
-    print_log(f"  Average time per image: {avg_time_ms:.1f}ms")
-    print_log(f"  FPS: {fps:.2f}")
+    if _is_main_process():
+        print_log(f"\nInference speed:")
+        print_log(f"  Average time per image: {avg_time_ms:.1f}ms")
+        print_log(f"  FPS: {fps:.2f}")
 
     # Save results to file
-    results_dir = os.path.join(args.output_dir, 'results')
-    test_metrics.save_results(results_dir, 'GeminiFusion', avg_time_ms, fps, num_images)
+    if _is_main_process():
+        results_dir = os.path.join(args.output_dir, 'results')
+        test_metrics.save_results(results_dir, 'GeminiFusion', avg_time_ms, fps, num_images)
 
     helpers.logger.close()
     cleanup_ddp()
