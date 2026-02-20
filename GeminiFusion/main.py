@@ -49,6 +49,14 @@ except ImportError:
 from datasets.uavscenes import UAVScenesDataset
 
 
+def _is_main_process() -> bool:
+    return (not dist.is_initialized()) or dist.get_rank() == 0
+
+
+def _format_gb(num_bytes: int) -> str:
+    return f"{num_bytes / (1024 ** 3):.2f} GB"
+
+
 def setup_ddp():
     """Setup distributed data parallel training."""
     if "SLURM_PROCID" in os.environ and "RANK" not in os.environ:
@@ -415,14 +423,61 @@ def train(
     batch_time = AverageMeter()
     losses = AverageMeter()
 
+    did_log_once = getattr(train, "_did_log_once", False)
+
     for i, sample in tqdm(enumerate(train_loader), total=len(train_loader)):
         start = time.time()
         inputs = [sample[key].cuda().float() for key in input_types]
         target = sample["mask"].cuda().long()
 
+        if (not did_log_once) and i == 0 and _is_main_process():
+            try:
+                torch.cuda.reset_peak_memory_stats()
+            except Exception:
+                pass
+
+            print_log("[Debug] First train iteration tensor shapes:")
+            for key_name, tensor in zip(input_types, inputs):
+                print_log(
+                    f"  - {key_name}: shape={tuple(tensor.shape)} dtype={tensor.dtype} device={tensor.device}"
+                )
+            print_log(
+                f"  - mask: shape={tuple(target.shape)} dtype={target.dtype} device={target.device}"
+            )
+
+            try:
+                alloc = torch.cuda.memory_allocated()
+                reserv = torch.cuda.memory_reserved()
+                max_alloc = torch.cuda.max_memory_allocated()
+                max_reserv = torch.cuda.max_memory_reserved()
+                print_log(
+                    "[Debug] CUDA memory before forward: "
+                    f"allocated={_format_gb(alloc)}, reserved={_format_gb(reserv)}, "
+                    f"max_alloc={_format_gb(max_alloc)}, max_reserved={_format_gb(max_reserv)}"
+                )
+            except Exception:
+                pass
+
         # Forward pass
-        with autocast(enabled=amp_enabled):
-            outputs, masks = segmenter(inputs)
+        try:
+            with autocast(enabled=amp_enabled):
+                outputs, masks = segmenter(inputs)
+        except RuntimeError as e:
+            # If the very first forward OOMs, emit memory stats to help diagnosis.
+            if (not did_log_once) and _is_main_process() and "out of memory" in str(e).lower():
+                try:
+                    alloc = torch.cuda.memory_allocated()
+                    reserv = torch.cuda.memory_reserved()
+                    max_alloc = torch.cuda.max_memory_allocated()
+                    max_reserv = torch.cuda.max_memory_reserved()
+                    print_log(
+                        "[Debug] CUDA memory at OOM: "
+                        f"allocated={_format_gb(alloc)}, reserved={_format_gb(reserv)}, "
+                        f"max_alloc={_format_gb(max_alloc)}, max_reserved={_format_gb(max_reserv)}"
+                    )
+                except Exception:
+                    pass
+            raise
 
         # Compute loss
         loss = 0
@@ -453,6 +508,23 @@ def train(
             optimizer.step()
         losses.update(loss.item())
         batch_time.update(time.time() - start)
+
+        if (not did_log_once) and i == 0 and _is_main_process():
+            try:
+                alloc = torch.cuda.memory_allocated()
+                reserv = torch.cuda.memory_reserved()
+                max_alloc = torch.cuda.max_memory_allocated()
+                max_reserv = torch.cuda.max_memory_reserved()
+                print_log(
+                    "[Debug] CUDA memory after step: "
+                    f"allocated={_format_gb(alloc)}, reserved={_format_gb(reserv)}, "
+                    f"max_alloc={_format_gb(max_alloc)}, max_reserved={_format_gb(max_reserv)}"
+                )
+            except Exception:
+                pass
+
+            train._did_log_once = True
+            did_log_once = True
 
 
 def sliding_window_inference(
