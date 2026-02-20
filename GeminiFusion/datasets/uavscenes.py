@@ -19,6 +19,65 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 
+def _rgb_dir_candidates(data_root: str, scene: str):
+    return (
+        os.path.join(data_root, "interval5_CAM_LIDAR", "interval5_CAM_LIDAR", scene, "interval5_CAM"),
+        os.path.join(data_root, "interval5_CAM_LIDAR", scene, "interval5_CAM"),
+    )
+
+
+def _looks_like_uavscenes_root(data_root: str, probe_scene: str) -> bool:
+    return any(os.path.isdir(p) for p in _rgb_dir_candidates(data_root, probe_scene))
+
+
+def _resolve_uavscenes_root(data_root: str, probe_scene: str) -> str:
+    """Resolve common dataset-root nesting mistakes.
+
+    Users often pass a parent folder that contains another UAVScenesData folder, or
+    the data is nested one level deeper after extraction.
+    """
+    if not data_root:
+        return data_root
+
+    data_root = os.path.abspath(os.path.expanduser(data_root))
+
+    # Fast path: already correct
+    if _looks_like_uavscenes_root(data_root, probe_scene):
+        return data_root
+
+    # Common extra nesting patterns
+    for candidate in (
+        os.path.join(data_root, "UAVScenesData"),
+        os.path.join(data_root, "UAVScenesData", "UAVScenesData"),
+    ):
+        if _looks_like_uavscenes_root(candidate, probe_scene):
+            print(f"[UAVScenes] Resolved data_root '{data_root}' -> '{candidate}'")
+            return candidate
+
+    # Heuristic search: find an 'interval5_CAM_LIDAR' folder within a small depth
+    # and treat its parent as the dataset root.
+    max_depth = 4
+    base_depth = data_root.rstrip(os.sep).count(os.sep)
+    try:
+        for current_root, dirnames, _filenames in os.walk(data_root, topdown=True):
+            depth = current_root.rstrip(os.sep).count(os.sep) - base_depth
+            if depth >= max_depth:
+                dirnames[:] = []
+                continue
+
+            if "interval5_CAM_LIDAR" in dirnames:
+                candidate = current_root
+                if _looks_like_uavscenes_root(candidate, probe_scene):
+                    print(f"[UAVScenes] Resolved data_root '{data_root}' -> '{candidate}'")
+                    return candidate
+
+    except OSError:
+        # Permissions / broken mount: keep the original and let caller error out.
+        return data_root
+
+    return data_root
+
+
 # Scene splits (NewSplit.md)
 # Train: 13 scenes, Val: 3 scenes, Test: 4 scenes
 TRAIN_SCENES = [
@@ -183,7 +242,9 @@ class UAVScenesDataset(Dataset):
     ):
         super().__init__()
 
-        self.data_root = data_root
+        probe_scene = TRAIN_SCENES[0]
+        resolved_root = _resolve_uavscenes_root(data_root, probe_scene)
+        self.data_root = resolved_root
         self.split = split
         self.transform = transform
         self.hag_max_height = hag_max_height
@@ -213,20 +274,36 @@ class UAVScenesDataset(Dataset):
                     return candidate
             return None
 
+        # Fail fast (and avoid per-scene spam) if the dataset root is clearly wrong.
+        has_cam_lidar = os.path.isdir(os.path.join(self.data_root, "interval5_CAM_LIDAR"))
+        has_cam_label = os.path.isdir(os.path.join(self.data_root, "interval5_CAM_label"))
+        has_hag = (
+            os.path.isdir(os.path.join(self.data_root, "interval5_HAG_CSF"))
+            or os.path.isdir(os.path.join(self.data_root, "interval5_HAG"))
+        )
+        if not has_cam_lidar:
+            print(
+                "[UAVScenes] Error: 'interval5_CAM_LIDAR' folder not found under "
+                f"data_root='{self.data_root}'. "
+                "Pass --train-dir to the folder that directly contains interval5_CAM_LIDAR/ interval5_CAM_label/ interval5_HAG*/."
+            )
+            return samples
+        if not has_cam_label:
+            print(
+                "[UAVScenes] Error: 'interval5_CAM_label' folder not found under "
+                f"data_root='{self.data_root}'."
+            )
+            return samples
+        if not has_hag:
+            print(
+                "[UAVScenes] Error: neither 'interval5_HAG_CSF' nor 'interval5_HAG' folder found under "
+                f"data_root='{self.data_root}'."
+            )
+            return samples
+
         for scene in scenes:
             # RGB path pattern
-            rgb_dir = first_existing_dir(
-                os.path.join(
-                    self.data_root,
-                    "interval5_CAM_LIDAR", "interval5_CAM_LIDAR",
-                    scene, "interval5_CAM"
-                ),
-                os.path.join(
-                    self.data_root,
-                    "interval5_CAM_LIDAR",
-                    scene, "interval5_CAM"
-                ),
-            )
+            rgb_dir = first_existing_dir(*_rgb_dir_candidates(self.data_root, scene))
 
             if rgb_dir is None:
                 print(f"Warning: RGB directory not found for scene '{scene}' under data_root='{self.data_root}'")
