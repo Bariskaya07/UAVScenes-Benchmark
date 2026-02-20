@@ -1015,20 +1015,26 @@ def main():
 
         # Evaluation only
         if args.evaluate:
-            iou = validate(
-                segmenter,
-                args.input,
-                val_loader,
-                0,
-                ckpt_dir,
-                num_classes=args.num_classes,
-                save_image=args.save_image,
-                amp_enabled=args.amp,
-            )
-            if _is_main_process():
-                print_log(f"Evaluation finished. IoU={iou:.2f}")
-            cleanup_ddp()
-            return
+            try:
+                iou = validate(
+                    segmenter,
+                    args.input,
+                    val_loader,
+                    0,
+                    ckpt_dir,
+                    num_classes=args.num_classes,
+                    save_image=args.save_image,
+                    amp_enabled=args.amp,
+                )
+                if _is_main_process():
+                    print_log(f"Evaluation finished. IoU={iou:.2f}")
+                return
+            finally:
+                try:
+                    helpers.logger.close()
+                except Exception:
+                    pass
+                cleanup_ddp()
 
         print_log(f"Training Stage {task_idx}")
 
