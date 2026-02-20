@@ -39,8 +39,23 @@ class Normalize:
                 sample[k] /= 255
                 sample[k] = TF.normalize(sample[k], self.mean, self.std)
             else:
-                sample[k] = sample[k].float()
-                sample[k] /= 255
+                # Auxiliary modalities (e.g., HAG) can already be normalized to [0, 1].
+                # For fair comparison with CMNeXt/TokenFusion we center aux data to [-1, 1]
+                # when it looks like [0, 1] (or [0, 255] uint8-like inputs).
+                aux = v.float()
+
+                # Heuristic: treat uint8-like ranges as images in [0, 255].
+                v_min = float(aux.min()) if aux.numel() else 0.0
+                v_max = float(aux.max()) if aux.numel() else 0.0
+                if v_min >= 0.0 and v_max <= 255.0 and v_max > 1.5:
+                    aux = aux / 255.0
+
+                # If aux is now in a plausible [0, 1] range, center to [-1, 1].
+                if v_min >= 0.0 and v_max <= 255.0:
+                    # After the optional /255, values should be in [0, 1].
+                    aux = (aux - 0.5) / 0.5
+
+                sample[k] = aux
 
         return sample
 
@@ -326,22 +341,25 @@ class Resize:
         self.size = size
 
     def __call__(self, sample: list) -> list:
+        # If the caller provides an explicit (H, W), match it exactly.
+        # This is used for fast validation in UAVScenes and avoids inflating one
+        # dimension above 768 (which can spike VRAM).
+        if isinstance(self.size, (tuple, list)) and len(self.size) == 2:
+            tH, tW = int(self.size[0]), int(self.size[1])
+            for k, v in sample.items():
+                if k == "mask":
+                    sample[k] = TF.resize(
+                        v.unsqueeze(0), (tH, tW), TF.InterpolationMode.NEAREST
+                    ).squeeze(0)
+                else:
+                    sample[k] = TF.resize(v, (tH, tW), TF.InterpolationMode.BILINEAR)
+            return sample
+
+        # If size is an int, preserve aspect ratio by matching the smaller edge.
+        t = int(self.size)
         H, W = sample["rgb"].shape[1:]
-
-        # scale the image
-        scale_factor = self.size[0] / min(H, W)
+        scale_factor = t / min(H, W)
         nH, nW = round(H * scale_factor), round(W * scale_factor)
-        for k, v in sample.items():
-            if k == "mask":
-                sample[k] = TF.resize(
-                    v.unsqueeze(0), (nH, nW), TF.InterpolationMode.NEAREST
-                ).squeeze(0)
-            else:
-                sample[k] = TF.resize(v, (nH, nW), TF.InterpolationMode.BILINEAR)
-        # img = TF.resize(img, (nH, nW), TF.InterpolationMode.BILINEAR)
-        # mask = TF.resize(mask, (nH, nW), TF.InterpolationMode.NEAREST)
-
-        # make the image divisible by stride
         alignH, alignW = int(math.ceil(nH / 32)) * 32, int(math.ceil(nW / 32)) * 32
 
         for k, v in sample.items():
@@ -350,11 +368,8 @@ class Resize:
                     v.unsqueeze(0), (alignH, alignW), TF.InterpolationMode.NEAREST
                 ).squeeze(0)
             else:
-                sample[k] = TF.resize(
-                    v, (alignH, alignW), TF.InterpolationMode.BILINEAR
-                )
-        # img = TF.resize(img, (alignH, alignW), TF.InterpolationMode.BILINEAR)
-        # mask = TF.resize(mask, (alignH, alignW), TF.InterpolationMode.NEAREST)
+                sample[k] = TF.resize(v, (alignH, alignW), TF.InterpolationMode.BILINEAR)
+
         return sample
 
 
@@ -378,7 +393,7 @@ class RandomResizedCrop:
         # get the scale
         ratio = random.random() * (self.scale[1] - self.scale[0]) + self.scale[0]
         # ratio = random.uniform(min(self.scale), max(self.scale))
-        scale = int(tH * ratio), int(tW * 4 * ratio)
+        scale = int(tH * ratio), int(tW * ratio)
         # scale the image
         scale_factor = min(max(scale) / max(H, W), min(scale) / min(H, W))
         nH, nW = int(H * scale_factor + 0.5), int(W * scale_factor + 0.5)
