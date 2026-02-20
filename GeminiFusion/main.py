@@ -618,7 +618,11 @@ def train(
 
         # Compute loss
         loss = 0
-        for output in outputs:
+        # Match TokenFusion: train on modality-specific logits only.
+        # The 3rd output is an ensemble that depends on learnable `alpha` and can
+        # become numerically unstable under AMP (softmax/exp). We use ensemble
+        # for evaluation/selection, not for the training loss.
+        for output in outputs[:2]:
             output = F.interpolate(
                 output, size=target.size()[1:], mode="bilinear", align_corners=False
             )

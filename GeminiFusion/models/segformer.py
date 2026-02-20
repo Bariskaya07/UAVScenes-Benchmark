@@ -392,7 +392,8 @@ class WeTr(nn.Module):
 
         x = [self.decoder(x[0]), self.decoder(x[1])]
         ens = 0
-        alpha_soft = F.softmax(self.alpha)
+        # Compute in FP32 for stability under AMP.
+        alpha_soft = F.softmax(self.alpha.float(), dim=0)
         for l in range(self.num_parallel):
             ens += alpha_soft[l] * x[l].detach()
         x.append(ens)
