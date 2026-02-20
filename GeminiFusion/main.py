@@ -137,6 +137,13 @@ def get_arguments():
         help="Validation batch size (default: 1). Increase for faster eval if VRAM allows.",
     )
     parser.add_argument(
+        "--val-progress",
+        type=str,
+        default="rank0",
+        choices=["rank0", "all", "none"],
+        help="Validation progress display: rank0 (default), all ranks, or none.",
+    )
+    parser.add_argument(
         "--num-workers",
         type=int,
         default=8,
@@ -724,7 +731,7 @@ def sliding_window_inference(
 
 def validate(
     segmenter, input_types, val_loader, epoch, save_dir, num_classes=19, save_image=0,
-    eval_mode='whole', amp_enabled=True
+    eval_mode='whole', amp_enabled=True, progress_mode: str = "rank0"
 ):
     """Validate model.
 
@@ -739,7 +746,12 @@ def validate(
     for _ in range(len(input_types) + 1):
         conf_mat.append(np.zeros((num_classes, num_classes), dtype=int))
 
-    if _is_main_process():
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    should_print_header = (
+        (progress_mode == "all")
+        or (progress_mode == "rank0" and _is_main_process())
+    )
+    if should_print_header:
         print_log(f"Evaluating with mode: {eval_mode}")
 
     with torch.no_grad():
@@ -749,9 +761,20 @@ def validate(
 
         iterator = enumerate(val_loader)
         pbar = None
-        if _is_main_process():
+        show_pbar = (
+            (progress_mode == "all")
+            or (progress_mode == "rank0" and _is_main_process())
+        )
+        if show_pbar:
             try:
-                pbar = tqdm(iterator, total=len(val_loader), desc="Val", leave=False)
+                desc = f"Val[r{rank}]" if (dist.is_initialized() and dist.get_world_size() > 1) else "Val"
+                pbar = tqdm(
+                    iterator,
+                    total=len(val_loader),
+                    desc=desc,
+                    leave=False,
+                    position=rank if progress_mode == "all" else 0,
+                )
                 iterator = pbar
             except Exception:
                 pbar = None
@@ -785,17 +808,16 @@ def validate(
             end_time = time.time()
             all_times += end_time - start_time
 
-            if pbar is not None and _is_main_process():
+            if pbar is not None:
                 try:
                     pbar.set_postfix({"imgs": num_images + gt_batch.shape[0], "lat": f"{(end_time-start_time):.3f}s"})
                 except Exception:
                     pass
 
-            if _is_main_process() and (i == 0 or (i + 1) % 50 == 0):
+            if (progress_mode == "all" or _is_main_process()) and (i == 0 or (i + 1) % 50 == 0):
                 try:
-                    print_log(
-                        f"[Val] step={i+1}/{len(val_loader)} batch={gt_batch.shape[0]} total_imgs={num_images + gt_batch.shape[0]}"
-                    )
+                    prefix = f"[Val r{rank}]" if (dist.is_initialized() and dist.get_world_size() > 1) else "[Val]"
+                    print_log(f"{prefix} step={i+1}/{len(val_loader)} batch={gt_batch.shape[0]} total_imgs={num_images + gt_batch.shape[0]}")
                 except Exception:
                     pass
 
@@ -863,7 +885,7 @@ def validate(
             num_images += gt_batch.shape[0]
 
         latency = all_times / max(1, num_images)
-        if _is_main_process():
+        if should_print_header:
             print(f"all_times: {all_times}  num_images: {num_images}  latency: {latency}")
 
     # Aggregate confusion matrices across ranks for correct multi-GPU evaluation.
@@ -1102,6 +1124,7 @@ def main():
                     num_classes=args.num_classes,
                     save_image=args.save_image,
                     amp_enabled=args.amp,
+                    progress_mode=args.val_progress,
                 )
                 if _is_main_process():
                     print_log(f"Evaluation finished. IoU={iou:.2f}")
@@ -1141,6 +1164,7 @@ def main():
                     ckpt_dir,
                     args.num_classes,
                     amp_enabled=args.amp,
+                    progress_mode=args.val_progress,
                 )
                 if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
                     state_to_save = _segmenter_state_dict_for_save(segmenter, args)
