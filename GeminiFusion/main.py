@@ -830,7 +830,6 @@ def main():
     test_metrics = UAVScenesMetrics(num_classes=args.num_classes, ignore_label=255)
 
     print_log("Running test evaluation with sliding window inference...")
-    import time
     total_time = 0
     num_images = 0
 
