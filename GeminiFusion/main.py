@@ -925,8 +925,10 @@ def validate(
                 print_log("\nPer-class IoU:")
                 for class_idx, cls_name in enumerate(uavscenes_classes):
                     marker = "[D]" if class_idx >= 17 else "[S]"
+                    val = float(per_class_iou[class_idx])
+                    val_str = "N/A" if np.isnan(val) else f"{val:>6.2f}%"
                     print_log(
-                        f"  {marker} {cls_name:<18} {per_class_iou[class_idx]:>6.2f}%"
+                        f"  {marker} {cls_name:<18} {val_str}"
                     )
 
         print_log("")
