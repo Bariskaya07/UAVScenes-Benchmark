@@ -19,8 +19,6 @@ import argparse
 import random
 import time
 import warnings
-import datetime
-import functools
 
 warnings.filterwarnings("ignore")
 
@@ -35,20 +33,8 @@ from utils import *
 import utils.helpers as helpers
 from utils.optimizer import PolyWarmupAdamW
 from models.segformer import WeTr
-from torch import distributed as dist
-from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from utils.augmentations_mm import *
-from torch.nn.parallel import DistributedDataParallel as DDP
-
-try:
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp import ShardingStrategy, CPUOffload, BackwardPrefetch
-    from torch.distributed.fsdp.api import FullStateDictConfig, StateDictType
-    from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
-    FSDP_AVAILABLE = True
-except Exception:
-    FSDP_AVAILABLE = False
 
 try:
     from fvcore.nn import FlopCountAnalysis
@@ -59,51 +45,18 @@ except ImportError:
 from datasets.uavscenes import UAVScenesDataset
 
 
-def _is_main_process() -> bool:
-    return (not dist.is_initialized()) or dist.get_rank() == 0
-
-
 def _format_gb(num_bytes: int) -> str:
     return f"{num_bytes / (1024 ** 3):.2f} GB"
 
 
 def setup_ddp():
-    """Setup distributed data parallel training."""
-    if "SLURM_PROCID" in os.environ and "RANK" not in os.environ:
-        # Multi-node SLURM
-        world_size = int(os.environ["WORLD_SIZE"])
-        rank = int(os.environ["SLURM_PROCID"])
-        gpus_per_node = int(os.environ["SLURM_GPUS_ON_NODE"])
-        gpu = rank - gpus_per_node * (rank // gpus_per_node)
+    """Setup single GPU training."""
+    gpu = 0
+    if torch.cuda.is_available():
         torch.cuda.set_device(gpu)
-        dist.init_process_group(
-            backend="nccl",
-            world_size=world_size,
-            rank=rank,
-            timeout=datetime.timedelta(seconds=7200),
-        )
-    elif "RANK" in os.environ and "WORLD_SIZE" in os.environ:
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
-        gpu = int(os.environ["LOCAL_RANK"])
-        torch.cuda.set_device(gpu)
-        dist.init_process_group(
-            "nccl",
-            init_method="env://",
-            world_size=world_size,
-            rank=rank,
-            timeout=datetime.timedelta(seconds=7200),
-        )
-        dist.barrier()
-    else:
-        gpu = 0
     return gpu
 
 
-def cleanup_ddp():
-    """Cleanup distributed training."""
-    if dist.is_initialized():
-        dist.destroy_process_group()
 
 
 def get_arguments():
@@ -137,13 +90,6 @@ def get_arguments():
         help="Validation batch size (default: 1). Increase for faster eval if VRAM allows.",
     )
     parser.add_argument(
-        "--val-progress",
-        type=str,
-        default="rank0",
-        choices=["rank0", "all", "none"],
-        help="Validation progress display: rank0 (default), all ranks, or none.",
-    )
-    parser.add_argument(
         "--num-workers",
         type=int,
         default=8,
@@ -169,33 +115,6 @@ def get_arguments():
         type=bool,
         default=True,
         help="Freeze batch normalization",
-    )
-
-    # Distributed / FSDP
-    parser.add_argument(
-        "--fsdp",
-        action="store_true",
-        default=False,
-        help="Enable Fully Sharded Data Parallel (FSDP) when launched with torchrun",
-    )
-    parser.add_argument(
-        "--fsdp-auto-wrap",
-        type=str,
-        default="size",
-        choices=["none", "size"],
-        help="FSDP auto-wrapping policy",
-    )
-    parser.add_argument(
-        "--fsdp-min-params",
-        type=int,
-        default=1_000_000,
-        help="Min parameter count for size-based auto-wrap",
-    )
-    parser.add_argument(
-        "--fsdp-cpu-offload",
-        action="store_true",
-        default=False,
-        help="Offload parameters to CPU (usually slower; can reduce VRAM)",
     )
 
     # Precision / memory
@@ -313,50 +232,7 @@ def create_segmenter(num_classes, gpu, backbone, n_heads, dpr, drop_rate):
     return segmenter, param_groups
 
 
-def _maybe_wrap_fsdp(segmenter: nn.Module, gpu: int, args: argparse.Namespace) -> nn.Module:
-    if not args.fsdp:
-        return segmenter
-    if not dist.is_initialized() or dist.get_world_size() <= 1:
-        print_log("[FSDP] --fsdp set but distributed is not initialized; running single-GPU.")
-        return segmenter
-    if not FSDP_AVAILABLE:
-        raise RuntimeError(
-            "FSDP requested but not available in this PyTorch build. "
-            "Install a PyTorch version with torch.distributed.fsdp support."
-        )
-
-    auto_wrap_policy = None
-    if args.fsdp_auto_wrap == "size":
-        auto_wrap_policy = functools.partial(
-            size_based_auto_wrap_policy, min_num_params=int(args.fsdp_min_params)
-        )
-
-    cpu_offload = CPUOffload(offload_params=True) if args.fsdp_cpu_offload else None
-
-    fsdp_segmenter = FSDP(
-        segmenter,
-        auto_wrap_policy=auto_wrap_policy,
-        sharding_strategy=ShardingStrategy.FULL_SHARD,
-        backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-        cpu_offload=cpu_offload,
-        use_orig_params=True,
-        device_id=torch.device(f"cuda:{gpu}"),
-    )
-    print_log(
-        f"[FSDP] Enabled: world_size={dist.get_world_size()} auto_wrap={args.fsdp_auto_wrap} "
-        f"min_params={args.fsdp_min_params} cpu_offload={args.fsdp_cpu_offload}"
-    )
-    return fsdp_segmenter
-
-
-def _segmenter_state_dict_for_save(segmenter: nn.Module, args: argparse.Namespace) -> dict:
-    if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
-        # Full (unsharded) state dict on rank0 only; offload to CPU to save VRAM.
-        full_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-        with FSDP.state_dict_type(segmenter, StateDictType.FULL_STATE_DICT, full_cfg):
-            return segmenter.state_dict()
-    if isinstance(segmenter, DDP):
-        return segmenter.module.state_dict()
+def _segmenter_state_dict_for_save(segmenter: nn.Module) -> dict:
     return segmenter.state_dict()
 
 
@@ -422,25 +298,6 @@ def create_uavscenes_loaders(args, input_scale):
             f"Got data_root='{args.train_dir}'. Expected e.g. '{args.train_dir}/interval5_CAM_LIDAR/...' and '{args.train_dir}/interval5_CAM_label/...' and HAG under '{args.train_dir}/interval5_HAG_CSF/' (or 'interval5_HAG/')."
         )
 
-    # Create samplers
-    if dist.is_initialized():
-        train_sampler = DistributedSampler(
-            trainset, dist.get_world_size(), dist.get_rank(), shuffle=True
-        )
-    else:
-        train_sampler = None
-
-    if dist.is_initialized():
-        val_sampler = DistributedSampler(
-            validset, dist.get_world_size(), dist.get_rank(), shuffle=False
-        )
-        test_sampler = DistributedSampler(
-            testset, dist.get_world_size(), dist.get_rank(), shuffle=False
-        )
-    else:
-        val_sampler = None
-        test_sampler = None
-
     # Create loaders
     train_loader = DataLoader(
         trainset,
@@ -448,8 +305,7 @@ def create_uavscenes_loaders(args, input_scale):
         num_workers=args.num_workers,
         pin_memory=True,
         drop_last=True,
-        sampler=train_sampler,
-        shuffle=(train_sampler is None),
+        shuffle=True,
     )
 
     val_loader = DataLoader(
@@ -458,7 +314,6 @@ def create_uavscenes_loaders(args, input_scale):
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
-        sampler=val_sampler,
     )
 
     test_loader = DataLoader(
@@ -467,10 +322,9 @@ def create_uavscenes_loaders(args, input_scale):
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
-        sampler=test_sampler,
     )
 
-    return train_loader, val_loader, test_loader, train_sampler
+    return train_loader, val_loader, test_loader
 
 
 def load_ckpt(ckpt_path, ckpt_dict, is_pretrain_finetune=False):
@@ -542,19 +396,17 @@ def train(
 
     did_log_once = getattr(train, "_did_log_once", False)
 
-    is_main = _is_main_process()
     iterator = enumerate(train_loader)
     pbar = None
-    if is_main:
-        pbar = tqdm(iterator, total=len(train_loader))
-        iterator = pbar
+    pbar = tqdm(iterator, total=len(train_loader))
+    iterator = pbar
 
     for i, sample in iterator:
         start = time.time()
         inputs = [sample[key].cuda().float() for key in input_types]
         target = sample["mask"].cuda().long()
 
-        if i == 0 and _is_main_process():
+        if i == 0:
             try:
                 lr_groups = [pg.get("lr", None) for pg in optimizer.param_groups]
                 lr_groups_str = ", ".join(
@@ -567,7 +419,7 @@ def train(
             except Exception:
                 pass
 
-        if (not did_log_once) and i == 0 and _is_main_process():
+        if (not did_log_once) and i == 0:
             try:
                 torch.cuda.reset_peak_memory_stats()
             except Exception:
@@ -601,7 +453,7 @@ def train(
                 outputs, masks = segmenter(inputs)
         except RuntimeError as e:
             # If the very first forward OOMs, emit memory stats to help diagnosis.
-            if (not did_log_once) and _is_main_process() and "out of memory" in str(e).lower():
+            if (not did_log_once) and "out of memory" in str(e).lower():
                 try:
                     alloc = torch.cuda.memory_allocated()
                     reserv = torch.cuda.memory_reserved()
@@ -630,17 +482,16 @@ def train(
             loss += segm_crit(output.float(), target)
 
         if not torch.isfinite(loss):
-            if _is_main_process():
-                try:
-                    print_log(f"[NaN] Non-finite loss at epoch={epoch} iter={i}: loss={loss.item()}")
-                    for oi, out in enumerate(outputs):
-                        out_f = out.float()
-                        fin = torch.isfinite(out_f)
-                        print_log(
-                            f"  output[{oi}] finite={bool(fin.all())} min={out_f.min().item():.3e} max={out_f.max().item():.3e}"
-                        )
-                except Exception:
-                    pass
+            try:
+                print_log(f"[NaN] Non-finite loss at epoch={epoch} iter={i}: loss={loss.item()}")
+                for oi, out in enumerate(outputs):
+                    out_f = out.float()
+                    fin = torch.isfinite(out_f)
+                    print_log(
+                        f"  output[{oi}] finite={bool(fin.all())} min={out_f.min().item():.3e} max={out_f.max().item():.3e}"
+                    )
+            except Exception:
+                pass
             raise RuntimeError("Non-finite loss detected (NaN/Inf).")
 
         # Backward pass
@@ -687,7 +538,7 @@ def train(
             except Exception:
                 pass
 
-        if (not did_log_once) and i == 0 and _is_main_process():
+        if (not did_log_once) and i == 0:
             try:
                 alloc = torch.cuda.memory_allocated()
                 reserv = torch.cuda.memory_reserved()
@@ -704,8 +555,7 @@ def train(
             train._did_log_once = True
             did_log_once = True
 
-    if is_main:
-        print_log(f"[Train] epoch={epoch} avg_loss={losses.avg:.4f}")
+    print_log(f"[Train] epoch={epoch} avg_loss={losses.avg:.4f}")
 
 
 def sliding_window_inference(
@@ -766,7 +616,7 @@ def sliding_window_inference(
 
 def validate(
     segmenter, input_types, val_loader, epoch, save_dir, num_classes=19, save_image=0,
-    eval_mode='whole', amp_enabled=True, progress_mode: str = "rank0"
+    eval_mode='whole', amp_enabled=True
 ):
     """Validate model.
 
@@ -781,13 +631,7 @@ def validate(
     for _ in range(len(input_types) + 1):
         conf_mat.append(np.zeros((num_classes, num_classes), dtype=int))
 
-    rank = dist.get_rank() if dist.is_initialized() else 0
-    should_print_header = (
-        (progress_mode == "all")
-        or (progress_mode == "rank0" and _is_main_process())
-    )
-    if should_print_header:
-        print_log(f"Evaluating with mode: {eval_mode}")
+    print_log(f"Evaluating with mode: {eval_mode}")
 
     with torch.no_grad():
         all_times = 0
@@ -796,23 +640,16 @@ def validate(
 
         iterator = enumerate(val_loader)
         pbar = None
-        show_pbar = (
-            (progress_mode == "all")
-            or (progress_mode == "rank0" and _is_main_process())
-        )
-        if show_pbar:
-            try:
-                desc = f"Val[r{rank}]" if (dist.is_initialized() and dist.get_world_size() > 1) else "Val"
-                pbar = tqdm(
-                    iterator,
-                    total=len(val_loader),
-                    desc=desc,
-                    leave=False,
-                    position=rank if progress_mode == "all" else 0,
-                )
-                iterator = pbar
-            except Exception:
-                pbar = None
+        try:
+            pbar = tqdm(
+                iterator,
+                total=len(val_loader),
+                desc="Val",
+                leave=False,
+            )
+            iterator = pbar
+        except Exception:
+            pbar = None
 
         for i, sample in iterator:
             inputs = [sample[key].float().cuda() for key in input_types]
@@ -849,9 +686,9 @@ def validate(
                 except Exception:
                     pass
 
-            if (progress_mode == "all" or _is_main_process()) and (i == 0 or (i + 1) % 50 == 0):
+            if i == 0 or (i + 1) % 50 == 0:
                 try:
-                    prefix = f"[Val r{rank}]" if (dist.is_initialized() and dist.get_world_size() > 1) else "[Val]"
+                    prefix = "[Val]"
                     print_log(f"{prefix} step={i+1}/{len(val_loader)} batch={gt_batch.shape[0]} total_imgs={num_images + gt_batch.shape[0]}")
                 except Exception:
                     pass
@@ -894,7 +731,7 @@ def validate(
                         gt_idx = gt < num_classes  # Ignore labels >= num_classes
                         conf_mat[idx] += confusion_matrix(gt[gt_idx], pred[gt_idx], num_classes)
 
-                if _is_main_process() and (save_image == -1 or num_saved < save_image):
+                if save_image == -1 or num_saved < save_image:
                     # Save only the first item in the batch to keep output predictable.
                     b = 0
                     gt0 = gt_batch[b]
@@ -920,15 +757,7 @@ def validate(
             num_images += gt_batch.shape[0]
 
         latency = all_times / max(1, num_images)
-        if should_print_header:
-            print(f"all_times: {all_times}  num_images: {num_images}  latency: {latency}")
-
-    # Aggregate confusion matrices across ranks for correct multi-GPU evaluation.
-    if dist.is_initialized() and dist.get_world_size() > 1:
-        for idx in range(len(conf_mat)):
-            t = torch.as_tensor(conf_mat[idx], dtype=torch.int64, device="cuda")
-            dist.all_reduce(t, op=dist.ReduceOp.SUM)
-            conf_mat[idx] = t.cpu().numpy()
+        print(f"all_times: {all_times}  num_images: {num_images}  latency: {latency}")
 
     # UAVScenes class names
     uavscenes_classes = [
@@ -939,40 +768,33 @@ def validate(
     ]
 
     ens_miou_out = 0.0
-    if _is_main_process():
-        for idx, input_type in enumerate(input_types + ["ens"]):
-            glob, mean, iou = getScores(conf_mat[idx])
-            miou = float(iou)  # percent
-            best_note = ""
-            if input_type == "ens":
-                ens_miou_out = miou
-                if miou > best_miou:
-                    best_miou = miou
-                    best_note = "    (best)"
+    for idx, input_type in enumerate(input_types + ["ens"]):
+        glob, mean, iou = getScores(conf_mat[idx])
+        miou = float(iou)  # percent
+        best_note = ""
+        if input_type == "ens":
+            ens_miou_out = miou
+            if miou > best_miou:
+                best_miou = miou
+                best_note = "    (best)"
 
-            input_type_str = f"({input_type})"
-            print_log(
-                f"Epoch {epoch:<4d} {input_type_str:<7s}   glob_acc={glob:<5.2f}    mean_acc={mean:<5.2f}    mIoU={miou:<5.2f}        {best_note}"
-            )
+        input_type_str = f"({input_type})"
+        print_log(
+            f"Epoch {epoch:<4d} {input_type_str:<7s}   glob_acc={glob:<5.2f}    mean_acc={mean:<5.2f}    mIoU={miou:<5.2f}        {best_note}"
+        )
 
-            if input_type == "ens":
-                per_class_iou = getPerClassIoU(conf_mat[idx])
-                print_log("\nPer-class IoU:")
-                for class_idx, cls_name in enumerate(uavscenes_classes):
-                    marker = "[D]" if class_idx >= 17 else "[S]"
-                    val = float(per_class_iou[class_idx])
-                    val_str = "N/A" if np.isnan(val) else f"{val:>6.2f}%"
-                    print_log(
-                        f"  {marker} {cls_name:<18} {val_str}"
-                    )
+        if input_type == "ens":
+            per_class_iou = getPerClassIoU(conf_mat[idx])
+            print_log("\nPer-class IoU:")
+            for class_idx, cls_name in enumerate(uavscenes_classes):
+                marker = "[D]" if class_idx >= 17 else "[S]"
+                val = float(per_class_iou[class_idx])
+                val_str = "N/A" if np.isnan(val) else f"{val:>6.2f}%"
+                print_log(
+                    f"  {marker} {cls_name:<18} {val_str}"
+                )
 
-        print_log("")
-
-    # Make sure all ranks return the same scalar.
-    if dist.is_initialized() and dist.get_world_size() > 1:
-        miou_tensor = torch.tensor([ens_miou_out], dtype=torch.float32, device="cuda")
-        dist.broadcast(miou_tensor, src=0)
-        ens_miou_out = float(miou_tensor.item())
+    print_log("")
 
     return ens_miou_out
 
@@ -1005,7 +827,7 @@ def main():
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # Setup logger
-    log_path = os.path.join(ckpt_dir, "log.txt") if _is_main_process() else os.devnull
+    log_path = os.path.join(ckpt_dir, "log.txt")
     helpers.logger = open(log_path, "w+")
     print_log(" ".join(sys.argv))
 
@@ -1062,14 +884,6 @@ def main():
             print_log(f"=> no checkpoint found at '{args.resume}'")
             return
 
-    # Setup distributed wrapper (FSDP preferred; otherwise DDP)
-    if args.fsdp:
-        segmenter = _maybe_wrap_fsdp(segmenter, gpu, args)
-    elif dist.is_initialized():
-        segmenter = DDP(
-            segmenter, device_ids=[gpu], output_device=gpu, find_unused_parameters=False
-        )
-
     epoch_current = epoch_start
 
     # Loss function (more stable than log_softmax + NLLLoss)
@@ -1102,7 +916,7 @@ def main():
 
         # Create data loaders
         if args.dataset == "uavscenes":
-            train_loader, val_loader, test_loader, train_sampler = create_uavscenes_loaders(
+            train_loader, val_loader, test_loader = create_uavscenes_loaders(
                 args, input_scale
             )
         else:
@@ -1117,12 +931,11 @@ def main():
         max_iter = total_epochs * iters_per_epoch
         power = getattr(args, 'power', 0.9)  # CMNeXt paper setting
         warmup_ratio = getattr(args, 'warmup_ratio', 0.1)  # CMNeXt paper setting
-        if _is_main_process():
-            print_log(
-                f"[LR] stage={task_idx} iters_per_epoch={iters_per_epoch} warmup_epochs={warmup_epochs} "
-                f"warmup_iter={warmup_iter} total_epochs={total_epochs} max_iter={max_iter} "
-                f"warmup_ratio={warmup_ratio} power={power} base_lr={lrs[task_idx]:.2e}"
-            )
+        print_log(
+            f"[LR] stage={task_idx} iters_per_epoch={iters_per_epoch} warmup_epochs={warmup_epochs} "
+            f"warmup_iter={warmup_iter} total_epochs={total_epochs} max_iter={max_iter} "
+            f"warmup_ratio={warmup_ratio} power={power} base_lr={lrs[task_idx]:.2e}"
+        )
 
         optimizer = PolyWarmupAdamW(
             params=[
@@ -1163,24 +976,18 @@ def main():
                     num_classes=args.num_classes,
                     save_image=args.save_image,
                     amp_enabled=args.amp,
-                    progress_mode=args.val_progress,
                 )
-                if _is_main_process():
-                    print_log(f"Evaluation finished. mIoU={iou:.2f}")
+                print_log(f"Evaluation finished. mIoU={iou:.2f}")
                 return
             finally:
                 try:
                     helpers.logger.close()
                 except Exception:
                     pass
-                cleanup_ddp()
 
         print_log(f"Training Stage {task_idx}")
 
         for epoch in range(min(args.num_epoch[task_idx], total_epoch - epoch_start)):
-            if train_sampler is not None:
-                train_sampler.set_epoch(epoch)
-
             train(
                 segmenter,
                 args.input,
@@ -1204,24 +1011,14 @@ def main():
                     ckpt_dir,
                     args.num_classes,
                     amp_enabled=args.amp,
-                    progress_mode=args.val_progress,
                 )
-                if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
-                    state_to_save = _segmenter_state_dict_for_save(segmenter, args)
-                    if _is_main_process():
-                        saver.save(
-                            miou,
-                            {"segmenter": state_to_save, "epoch_start": epoch_current},
-                        )
-                else:
-                    if _is_main_process():
-                        saver.save(
-                            miou,
-                            {
-                                "segmenter": _segmenter_state_dict_for_save(segmenter, args),
-                                "epoch_start": epoch_current,
-                            },
-                        )
+                saver.save(
+                    miou,
+                    {
+                        "segmenter": _segmenter_state_dict_for_save(segmenter),
+                        "epoch_start": epoch_current,
+                    },
+                )
 
             epoch_current += 1
 
@@ -1242,15 +1039,7 @@ def main():
         print_log(f"Loading best checkpoint: {best_ckpt}")
         ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=False)
         if "segmenter" in ckpt:
-            if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
-                # FULL state dict load: all ranks must participate.
-                full_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=False)
-                with FSDP.state_dict_type(segmenter, StateDictType.FULL_STATE_DICT, full_cfg):
-                    segmenter.load_state_dict(ckpt["segmenter"], strict=False)
-            elif isinstance(segmenter, DDP):
-                segmenter.module.load_state_dict(ckpt["segmenter"], strict=False)
-            else:
-                segmenter.load_state_dict(ckpt["segmenter"], strict=False)
+            segmenter.load_state_dict(ckpt["segmenter"], strict=False)
 
     # Evaluate on test set with slide mode using UAVScenesMetrics for detailed output
     from utils.metrics import UAVScenesMetrics
@@ -1289,7 +1078,7 @@ def main():
 
             test_metrics.update(pred, gt)
 
-            if (i + 1) % 50 == 0 and _is_main_process():
+            if (i + 1) % 50 == 0:
                 print_log(f'Test: {i + 1}/{len(test_loader)} samples')
 
     # Calculate inference speed
@@ -1297,22 +1086,18 @@ def main():
     fps = num_images / total_time
 
     # Print detailed results
-    if _is_main_process():
-        test_metrics.print_results()
+    test_metrics.print_results()
 
     # Print and save inference speed
-    if _is_main_process():
-        print_log(f"\nInference speed:")
-        print_log(f"  Average time per image: {avg_time_ms:.1f}ms")
-        print_log(f"  FPS: {fps:.2f}")
+    print_log(f"\nInference speed:")
+    print_log(f"  Average time per image: {avg_time_ms:.1f}ms")
+    print_log(f"  FPS: {fps:.2f}")
 
     # Save results to file
-    if _is_main_process():
-        results_dir = os.path.join(args.output_dir, 'results')
-        test_metrics.save_results(results_dir, 'GeminiFusion', avg_time_ms, fps, num_images)
+    results_dir = os.path.join(args.output_dir, 'results')
+    test_metrics.save_results(results_dir, 'GeminiFusion', avg_time_ms, fps, num_images)
 
     helpers.logger.close()
-    cleanup_ddp()
 
 
 if __name__ == "__main__":
