@@ -1237,8 +1237,12 @@ def main():
     print_log("=" * 60)
 
     # Load best model
-    best_ckpt = os.path.join(ckpt_dir, "ckpt.pth")
-    if os.path.exists(best_ckpt):
+    best_ckpt_candidates = [
+        os.path.join(ckpt_dir, "ckpt.pth"),
+        os.path.join(ckpt_dir, "model-best.pth.tar"),
+    ]
+    best_ckpt = next((p for p in best_ckpt_candidates if os.path.exists(p)), "")
+    if best_ckpt:
         print_log(f"Loading best checkpoint: {best_ckpt}")
         ckpt = torch.load(best_ckpt, map_location="cpu", weights_only=False)
         if "segmenter" in ckpt:
@@ -1251,6 +1255,10 @@ def main():
                 segmenter.module.load_state_dict(ckpt["segmenter"], strict=False)
             else:
                 segmenter.load_state_dict(ckpt["segmenter"], strict=False)
+    else:
+        print_log(
+            f"No checkpoint found in {ckpt_dir}. Looked for: {', '.join(best_ckpt_candidates)}"
+        )
 
     # Evaluate on test set with slide mode using UAVScenesMetrics for detailed output
     from utils.metrics import UAVScenesMetrics
