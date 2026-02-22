@@ -76,11 +76,29 @@ def load_config(config_path):
 
 def build_dataloaders(cfg):
     """Build training and validation dataloaders."""
+    photo_cfg = getattr(cfg.augmentation, 'photometric', None)
+    gaussian_cfg = getattr(cfg.augmentation, 'gaussian_blur', None)
+
+    color_jitter_p = 0.2 if (photo_cfg is not None and getattr(photo_cfg, 'enable', False)) else 0.0
+    gaussian_blur_p = (
+        getattr(gaussian_cfg, 'prob', 0.0)
+        if (gaussian_cfg is not None and getattr(gaussian_cfg, 'enable', False))
+        else 0.0
+    )
+    gaussian_blur_kernel = getattr(gaussian_cfg, 'kernel_size', 3)
+
     # Training transform
     train_transform = TrainTransform(
         crop_size=cfg.training.crop_size,
         scale_range=tuple(cfg.augmentation.scale_range),
         flip_prob=cfg.augmentation.flip_prob,
+        color_jitter_p=color_jitter_p,
+        brightness=getattr(photo_cfg, 'brightness', 0.2) if photo_cfg is not None else 0.2,
+        contrast=getattr(photo_cfg, 'contrast', 0.2) if photo_cfg is not None else 0.2,
+        saturation=getattr(photo_cfg, 'saturation', 0.2) if photo_cfg is not None else 0.2,
+        hue=getattr(photo_cfg, 'hue', 0.1) if photo_cfg is not None else 0.1,
+        gaussian_blur_p=gaussian_blur_p,
+        gaussian_blur_kernel=gaussian_blur_kernel,
         rgb_mean=cfg.normalization.rgb_mean,
         rgb_std=cfg.normalization.rgb_std,
         hag_mean=cfg.normalization.hag_mean,
@@ -420,9 +438,9 @@ def main():
         start_epoch = info['epoch']
         best_miou = info.get('best_miou', 0)
 
-    # Evaluation only (use slide mode for accurate final test)
+    # Evaluation only (use validation protocol for apples-to-apples checkpoint comparison)
     if args.eval_only:
-        eval_mode = getattr(cfg.evaluation, 'test_mode', 'slide')
+        eval_mode = getattr(cfg.evaluation, 'val_mode', 'whole')
         metrics = validate(model, val_loader, cfg, device, logger, eval_mode=eval_mode)
         return
 

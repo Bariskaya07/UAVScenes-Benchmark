@@ -150,8 +150,8 @@ AUGMENTATION:
       HUE: 0.1
     GAUSSIAN_BLUR:
       ENABLE: true           # As per paper
-      PROB: 0.5
-      KERNEL_SIZE: 5
+      PROB: 0.2
+      KERNEL_SIZE: 3
 
   # Test augmentations (minimal)
   TEST:

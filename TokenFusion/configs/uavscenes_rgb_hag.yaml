@@ -133,8 +133,8 @@ augmentation:
   # Gaussian blur (RGB only, not HAG)
   gaussian_blur:
     enable: true
-    prob: 0.5
-    kernel_size: 5
+    prob: 0.2
+    kernel_size: 3
 
 # ==============================================================================
 # HAG (Height Above Ground) Configuration

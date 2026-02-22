@@ -1083,153 +1083,146 @@ def main():
         condition=lambda x, y: x > y,
     )
 
-    # Learning rates for each stage
-    lrs = [args.lr_0, args.lr_1, args.lr_2]
+    # Single continuous LR schedule (TokenFusion/CMNeXt-style):
+    # warmup for first 3 epochs, then polynomial decay to epoch 60.
+    base_lr = args.lr_0
+    total_epochs = sum(args.num_epoch)
 
     print("-------------------------Optimizer Params--------------------")
     print(f"weight_decay: {args.weight_decay}")
-    print(f"lrs: {lrs}")
+    print(f"base_lr: {base_lr}")
+    print(f"total_epochs: {total_epochs}")
     print("----------------------------------------------------------------")
 
-    # Training loop
-    for task_idx in range(args.num_stages):
-        total_epoch = sum([args.num_epoch[idx] for idx in range(task_idx + 1)])
-        if epoch_start >= total_epoch:
-            continue
+    start = time.time()
+    torch.cuda.empty_cache()
 
-        start = time.time()
-        torch.cuda.empty_cache()
+    # Create data loaders
+    if args.dataset == "uavscenes":
+        train_loader, val_loader, test_loader, train_sampler = create_uavscenes_loaders(
+            args, input_scale
+        )
+    else:
+        raise NotImplementedError(f"Dataset {args.dataset} not implemented")
 
-        # Create data loaders
-        if args.dataset == "uavscenes":
-            train_loader, val_loader, test_loader, train_sampler = create_uavscenes_loaders(
-                args, input_scale
-            )
-        else:
-            # For NYUDv2/SUNRGBD, use original loader
-            raise NotImplementedError(f"Dataset {args.dataset} not implemented")
-
-        # Calculate warmup_iter/max_iter using the real iters_per_epoch (fair comparison with CMNeXt)
-        iters_per_epoch = len(train_loader)
-        warmup_epochs = getattr(args, 'warmup_epochs', 3)
-        warmup_iter = warmup_epochs * iters_per_epoch
-        total_epochs = sum(args.num_epoch)  # 60 epochs (3 stages × 20 epochs)
-        max_iter = total_epochs * iters_per_epoch
-        power = getattr(args, 'power', 0.9)  # CMNeXt paper setting
-        warmup_ratio = getattr(args, 'warmup_ratio', 0.1)  # CMNeXt paper setting
-        if _is_main_process():
-            print_log(
-                f"[LR] stage={task_idx} iters_per_epoch={iters_per_epoch} warmup_epochs={warmup_epochs} "
-                f"warmup_iter={warmup_iter} total_epochs={total_epochs} max_iter={max_iter} "
-                f"warmup_ratio={warmup_ratio} power={power} base_lr={lrs[task_idx]:.2e}"
-            )
-
-        optimizer = PolyWarmupAdamW(
-            params=[
-                {
-                    "params": param_groups[0],
-                    "lr": lrs[task_idx],
-                    "weight_decay": args.weight_decay,
-                },
-                {
-                    "params": param_groups[1],
-                    "lr": lrs[task_idx],
-                    "weight_decay": 0.0,
-                },
-                {
-                    "params": param_groups[2],
-                    "lr": lrs[task_idx] * 10,
-                    "weight_decay": args.weight_decay,
-                },
-            ],
-            lr=lrs[task_idx],
-            weight_decay=args.weight_decay,
-            betas=[0.9, 0.999],
-            warmup_iter=warmup_iter,
-            max_iter=max_iter,
-            warmup_ratio=warmup_ratio,
-            power=power,
+    # Calculate warmup/max_iter using real iterations per epoch
+    iters_per_epoch = len(train_loader)
+    warmup_epochs = getattr(args, "warmup_epochs", 3)
+    warmup_iter = warmup_epochs * iters_per_epoch
+    max_iter = total_epochs * iters_per_epoch
+    power = getattr(args, "power", 0.9)
+    warmup_ratio = getattr(args, "warmup_ratio", 0.1)
+    if _is_main_process():
+        print_log(
+            f"[LR] iters_per_epoch={iters_per_epoch} warmup_epochs={warmup_epochs} "
+            f"warmup_iter={warmup_iter} total_epochs={total_epochs} max_iter={max_iter} "
+            f"warmup_ratio={warmup_ratio} power={power} base_lr={base_lr:.2e}"
         )
 
-        # Evaluation only
-        if args.evaluate:
-            try:
-                iou = validate(
-                    segmenter,
-                    args.input,
-                    val_loader,
-                    0,
-                    ckpt_dir,
-                    num_classes=args.num_classes,
-                    save_image=args.save_image,
-                    amp_enabled=args.amp,
-                    progress_mode=args.val_progress,
-                )
-                if _is_main_process():
-                    print_log(f"Evaluation finished. mIoU={iou:.2f}")
-                return
-            finally:
-                try:
-                    helpers.logger.close()
-                except Exception:
-                    pass
-                cleanup_ddp()
+    optimizer = PolyWarmupAdamW(
+        params=[
+            {
+                "params": param_groups[0],
+                "lr": base_lr,
+                "weight_decay": args.weight_decay,
+            },
+            {
+                "params": param_groups[1],
+                "lr": base_lr,
+                "weight_decay": 0.0,
+            },
+            {
+                "params": param_groups[2],
+                "lr": base_lr * 10,
+                "weight_decay": args.weight_decay,
+            },
+        ],
+        lr=base_lr,
+        weight_decay=args.weight_decay,
+        betas=[0.9, 0.999],
+        warmup_iter=warmup_iter,
+        max_iter=max_iter,
+        warmup_ratio=warmup_ratio,
+        power=power,
+    )
 
-        print_log(f"Training Stage {task_idx}")
-
-        for epoch in range(min(args.num_epoch[task_idx], total_epoch - epoch_start)):
-            if train_sampler is not None:
-                train_sampler.set_epoch(epoch)
-
-            train(
+    # Evaluation only
+    if args.evaluate:
+        try:
+            iou = validate(
                 segmenter,
                 args.input,
-                train_loader,
-                optimizer,
-                epoch_current,
-                segm_crit,
-                args.freeze_bn,
-                args.print_loss,
+                val_loader,
+                0,
+                ckpt_dir,
+                num_classes=args.num_classes,
+                save_image=args.save_image,
                 amp_enabled=args.amp,
-                scaler=scaler,
-                grad_clip=args.grad_clip,
+                progress_mode=args.val_progress,
             )
+            if _is_main_process():
+                print_log(f"Evaluation finished. mIoU={iou:.2f}")
+            return
+        finally:
+            try:
+                helpers.logger.close()
+            except Exception:
+                pass
+            cleanup_ddp()
 
-            if (epoch + 1) % args.val_every == 0:
-                miou = validate(
-                    segmenter,
-                    args.input,
-                    val_loader,
-                    epoch_current,
-                    ckpt_dir,
-                    args.num_classes,
-                    amp_enabled=args.amp,
-                    progress_mode=args.val_progress,
-                )
-                if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
-                    state_to_save = _segmenter_state_dict_for_save(segmenter, args)
-                    if _is_main_process():
-                        saver.save(
-                            miou,
-                            {"segmenter": state_to_save, "epoch_start": epoch_current},
-                        )
-                else:
-                    if _is_main_process():
-                        saver.save(
-                            miou,
-                            {
-                                "segmenter": _segmenter_state_dict_for_save(segmenter, args),
-                                "epoch_start": epoch_current,
-                            },
-                        )
+    print_log("Training")
 
-            epoch_current += 1
+    for epoch_current in range(epoch_start, total_epochs):
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch_current)
 
-        print_log(
-            f"Stage {task_idx} finished, time spent {(time.time() - start) / 60.0:.3f}min\n"
+        train(
+            segmenter,
+            args.input,
+            train_loader,
+            optimizer,
+            epoch_current,
+            segm_crit,
+            args.freeze_bn,
+            args.print_loss,
+            amp_enabled=args.amp,
+            scaler=scaler,
+            grad_clip=args.grad_clip,
         )
 
-    print_log(f"All stages finished. Best Val is {saver.best_val:.3f}")
+        if (epoch_current + 1) % args.val_every == 0:
+            miou = validate(
+                segmenter,
+                args.input,
+                val_loader,
+                epoch_current,
+                ckpt_dir,
+                args.num_classes,
+                amp_enabled=args.amp,
+                progress_mode=args.val_progress,
+            )
+            next_epoch = epoch_current + 1
+            if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
+                state_to_save = _segmenter_state_dict_for_save(segmenter, args)
+                if _is_main_process():
+                    saver.save(
+                        miou,
+                        {"segmenter": state_to_save, "epoch_start": next_epoch},
+                    )
+            else:
+                if _is_main_process():
+                    saver.save(
+                        miou,
+                        {
+                            "segmenter": _segmenter_state_dict_for_save(segmenter, args),
+                            "epoch_start": next_epoch,
+                        },
+                    )
+
+    print_log(
+        f"Training finished, time spent {(time.time() - start) / 60.0:.3f}min\n"
+    )
+    print_log(f"All epochs finished. Best Val is {saver.best_val:.3f}")
 
     # Final evaluation on test set
     print_log("\n" + "=" * 60)

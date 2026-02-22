@@ -251,13 +251,17 @@ class Resize:
 class ColorJitter:
     """Random color jitter for RGB only."""
 
-    def __init__(self, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1):
+    def __init__(self, p=0.2, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1):
+        self.p = p
         self.brightness = brightness
         self.contrast = contrast
         self.saturation = saturation
         self.hue = hue
 
     def __call__(self, sample):
+        if np.random.random() >= self.p:
+            return sample
+
         rgb = sample['rgb'].astype(np.float32)
 
         # Brightness
@@ -271,10 +275,44 @@ class ColorJitter:
             mean = rgb.mean()
             rgb = (rgb - mean) * factor + mean
 
+        # Saturation / Hue in HSV space
+        if self.saturation > 0 or self.hue > 0:
+            hsv = cv2.cvtColor(np.clip(rgb, 0, 255).astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+
+            if self.saturation > 0:
+                sat_factor = 1.0 + np.random.uniform(-self.saturation, self.saturation)
+                hsv[..., 1] = np.clip(hsv[..., 1] * sat_factor, 0, 255)
+
+            if self.hue > 0:
+                hue_shift = np.random.uniform(-self.hue, self.hue) * 180.0
+                hsv[..., 0] = (hsv[..., 0] + hue_shift) % 180.0
+
+            rgb = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32)
+
         # Clip values
         rgb = np.clip(rgb, 0, 255)
         sample['rgb'] = rgb.astype(np.uint8)
 
+        return sample
+
+
+class RandomGaussianBlur:
+    """Random gaussian blur for RGB only."""
+
+    def __init__(self, p=0.2, kernel_size=3):
+        self.p = p
+        self.kernel_size = int(kernel_size)
+
+    def __call__(self, sample):
+        if np.random.random() >= self.p:
+            return sample
+
+        k = self.kernel_size
+        if k % 2 == 0:
+            k += 1
+        k = max(1, k)
+
+        sample['rgb'] = cv2.GaussianBlur(sample['rgb'], (k, k), 0)
         return sample
 
 
@@ -286,7 +324,9 @@ class TrainTransform:
     1. Random horizontal flip (p=0.5)
     2. Random scale (0.5 - 2.0)
     3. Random crop to 768x768
-    4. ToTensor with normalization
+    4. Color jitter (RGB only)
+    5. Gaussian blur (RGB only)
+    6. ToTensor with normalization
     """
 
     def __init__(
@@ -294,6 +334,13 @@ class TrainTransform:
         crop_size=768,
         scale_range=(0.5, 2.0),
         flip_prob=0.5,
+        color_jitter_p=0.2,
+        brightness=0.2,
+        contrast=0.2,
+        saturation=0.2,
+        hue=0.1,
+        gaussian_blur_p=0.2,
+        gaussian_blur_kernel=3,
         rgb_mean=None,
         rgb_std=None,
         hag_mean=None,
@@ -304,6 +351,14 @@ class TrainTransform:
             RandomHorizontalFlip(p=flip_prob),
             RandomScale(scale_range=scale_range),
             RandomCrop(crop_size=crop_size, ignore_label=ignore_label),
+            ColorJitter(
+                p=color_jitter_p,
+                brightness=brightness,
+                contrast=contrast,
+                saturation=saturation,
+                hue=hue,
+            ),
+            RandomGaussianBlur(p=gaussian_blur_p, kernel_size=gaussian_blur_kernel),
             ToTensor(rgb_mean=rgb_mean, rgb_std=rgb_std, hag_mean=hag_mean, hag_std=hag_std)
         ])
 
