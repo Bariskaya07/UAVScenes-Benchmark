@@ -1133,7 +1133,7 @@ def main():
             },
             {
                 "params": param_groups[2],
-                "lr": base_lr * 10,
+                "lr": base_lr,  # Same LR as encoder for fair comparison (no 10x)
                 "weight_decay": args.weight_decay,
             },
         ],
