@@ -1146,6 +1146,17 @@ def main():
         power=power,
     )
 
+    # Keep LR schedule continuous when resuming (avoid warmup restart).
+    # PolyWarmupAdamW uses `global_step`; without restoring it, LR starts from warmup.
+    if epoch_start > 0:
+        resumed_global_step = min(epoch_start * iters_per_epoch, max_iter - 1)
+        optimizer.global_step = max(0, resumed_global_step)
+        if _is_main_process():
+            print_log(
+                f"[LR-Resume] epoch_start={epoch_start} -> global_step={optimizer.global_step} "
+                f"(iters/epoch={iters_per_epoch})"
+            )
+
     # Evaluation only
     if args.evaluate:
         try:
