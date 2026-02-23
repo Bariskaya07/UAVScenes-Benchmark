@@ -13,7 +13,7 @@ batch_size: 8
 num_workers: 8
 
 # Augmentation (same as original GeminiFusion)
-color_jitter_p: 0.2
+color_jitter_p: 0.0  # Disabled from epoch 20
 horizontal_flip_p: 0.5
 gaussian_blur_p: 0.2
 gaussian_blur_kernel: [3, 3]
