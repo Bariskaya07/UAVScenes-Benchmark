@@ -40,6 +40,11 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from utils.augmentations_mm import *
 from torch.nn.parallel import DistributedDataParallel as DDP
+try:
+    from torch.distributed.elastic.multiprocessing.errors import record
+except Exception:
+    def record(fn):
+        return fn
 
 try:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -985,6 +990,7 @@ def validate(
     return ens_miou_out
 
 
+@record
 def main():
     global args, best_miou
     best_miou = 0.0
