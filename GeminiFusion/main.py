@@ -1070,6 +1070,9 @@ def main():
             print_log(f"=> no checkpoint found at '{args.resume}'")
             return
 
+    # Keep runtime best tracker consistent with checkpoint best for log labeling.
+    best_miou = float(best_val)
+
     # Setup distributed wrapper (FSDP preferred; otherwise DDP)
     if args.fsdp:
         segmenter = _maybe_wrap_fsdp(segmenter, gpu, args)
