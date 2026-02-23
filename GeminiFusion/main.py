@@ -171,6 +171,14 @@ def get_arguments():
         help="Freeze batch normalization",
     )
 
+    # Augmentation
+    parser.add_argument(
+        "--color-jitter-p",
+        type=float,
+        default=0.2,
+        help="Color jitter probability (default: 0.2, set to 0.0 to disable)",
+    )
+
     # Distributed / FSDP
     parser.add_argument(
         "--fsdp",
@@ -371,7 +379,7 @@ def create_uavscenes_loaders(args, input_scale):
     # Training transforms
     composed_trn = transforms.Compose([
         ToTensor(),
-        RandomColorJitter(p=0.2),
+        RandomColorJitter(p=args.color_jitter_p),
         RandomHorizontalFlip(p=0.5),
         RandomGaussianBlur((3, 3), p=0.2),
         RandomResizedCrop(input_scale, scale=(0.5, 2.0), seg_fill=255),
