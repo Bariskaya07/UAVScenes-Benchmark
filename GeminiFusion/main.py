@@ -279,6 +279,12 @@ def get_arguments():
         help="Number of images to save during validation",
     )
     parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="",
+        help="Directory for saving final evaluation outputs (defaults to ckpt/<ckpt>/results)",
+    )
+    parser.add_argument(
         "--grad-clip",
         type=float,
         default=0.0,
@@ -1337,7 +1343,8 @@ def main():
 
     # Save results to file
     if _is_main_process():
-        results_dir = os.path.join(args.output_dir, 'results')
+        output_root = args.output_dir if args.output_dir else ckpt_dir
+        results_dir = os.path.join(output_root, 'results')
         test_metrics.save_results(results_dir, 'GeminiFusion', avg_time_ms, fps, num_images)
 
     helpers.logger.close()
