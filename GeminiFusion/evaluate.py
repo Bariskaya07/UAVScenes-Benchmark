@@ -2,6 +2,7 @@
 GeminiFusion Evaluation Script for UAVScenes Dataset
 
 Implements sliding window inference for fair comparison with CMNeXt/DFormerv2.
+Saves results to JSON and TXT files automatically.
 
 Usage:
     python evaluate.py --resume ckpt/model-best.pth.tar --backbone mit_b2
@@ -9,6 +10,8 @@ Usage:
 
 import os
 import argparse
+import json
+import time
 import numpy as np
 import cv2
 import torch
@@ -16,6 +19,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
+from datetime import datetime
 
 from models.segformer import WeTr
 from datasets.uavscenes import UAVScenesDataset, CLASS_NAMES
@@ -84,8 +88,8 @@ def get_arguments():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="predictions",
-        help="Output directory for predictions",
+        default="",
+        help="Output directory for results (defaults to checkpoint directory)",
     )
     parser.add_argument(
         "--num-classes",
@@ -199,6 +203,14 @@ def evaluate(args):
     """Run evaluation."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Determine output directory
+    if args.output_dir:
+        results_dir = args.output_dir
+    else:
+        # Default: same directory as checkpoint
+        results_dir = os.path.join(os.path.dirname(args.resume), "results")
+    os.makedirs(results_dir, exist_ok=True)
+
     # Create model
     print(f"Loading model with backbone: {args.backbone}")
     model = WeTr(
@@ -249,28 +261,41 @@ def evaluate(args):
     )
 
     print(f"Evaluating on {len(dataset)} samples...")
+    print(f"Sliding window: {args.window_size}x{args.window_size}, stride={args.stride}")
+    print(f"Results will be saved to: {results_dir}")
 
     # Initialize confusion matrix
     conf_mat = np.zeros((args.num_classes, args.num_classes), dtype=np.int64)
 
-    # Create output directory
+    # Create prediction output directory
     if args.save_pred:
-        os.makedirs(args.output_dir, exist_ok=True)
+        pred_dir = os.path.join(results_dir, "predictions")
+        os.makedirs(pred_dir, exist_ok=True)
 
-    # Evaluation loop
+    # Evaluation loop with timing
+    total_time = 0.0
+    num_images = 0
+
     with torch.no_grad():
         for i, sample in tqdm(enumerate(dataloader), total=len(dataloader)):
             rgb = sample["rgb"].to(device).float()
             hag = sample["depth"].to(device).float()
             gt = sample["mask"][0].numpy().astype(np.uint8)
 
-            # Sliding window inference
+            # Inference with timing
+            torch.cuda.synchronize()
+            start_time = time.time()
+
             pred = sliding_window_inference(
                 model, rgb, hag,
                 window_size=args.window_size,
                 stride=args.stride,
                 num_classes=args.num_classes,
             )
+
+            torch.cuda.synchronize()
+            total_time += time.time() - start_time
+            num_images += 1
 
             # Update confusion matrix (ignore label 255)
             valid_mask = gt < args.num_classes
@@ -280,7 +305,7 @@ def evaluate(args):
 
             # Save prediction
             if args.save_pred:
-                pred_path = os.path.join(args.output_dir, f"pred_{i:04d}.png")
+                pred_path = os.path.join(pred_dir, f"pred_{i:04d}.png")
                 cv2.imwrite(pred_path, pred)
 
     # Calculate metrics
@@ -299,6 +324,13 @@ def evaluate(args):
     static_iou = np.nanmean(per_class_iou[static_classes]) * 100
     dynamic_iou = np.nanmean(per_class_iou[dynamic_classes]) * 100
 
+    # Inference speed
+    avg_time_ms = (total_time / num_images) * 1000
+    fps = num_images / total_time
+
+    # GPU info
+    gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
+
     # Print results
     print("\n" + "="*60)
     print("EVALUATION RESULTS")
@@ -314,8 +346,87 @@ def evaluate(args):
     print("\nPer-class IoU:")
     print("-"*40)
     for i, (name, iou) in enumerate(zip(CLASS_NAMES, per_class_iou)):
-        print(f"  {i:2d}. {name:20s}: {iou*100:5.2f}%")
+        cls_type = "[D]" if i >= 17 else "[S]"
+        print(f"  {cls_type} {i:2d}. {name:20s}: {iou*100:5.2f}%")
     print("-"*40)
+
+    # Inference speed
+    print(f"\nInference Speed ({gpu_name}):")
+    print(f"  Average time per image: {avg_time_ms:.1f}ms")
+    print(f"  FPS: {fps:.2f}")
+    print(f"  Total images: {num_images}")
+
+    # Save results to JSON
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_results = {
+        "model": "GeminiFusion",
+        "backbone": args.backbone,
+        "timestamp": timestamp,
+        "checkpoint": args.resume,
+        "dataset": "UAVScenes",
+        "split": "test",
+        "num_images": num_images,
+        "sliding_window": {
+            "window_size": args.window_size,
+            "stride": args.stride,
+        },
+        "metrics": {
+            "mIoU": round(float(miou), 2),
+            "static_mIoU": round(float(static_iou), 2),
+            "dynamic_mIoU": round(float(dynamic_iou), 2),
+            "global_accuracy": round(float(glob_acc), 2),
+            "mean_accuracy": round(float(mean_acc), 2),
+        },
+        "inference": {
+            "gpu": gpu_name,
+            "avg_time_per_image_ms": round(avg_time_ms, 1),
+            "fps": round(fps, 2),
+        },
+        "per_class_iou": {
+            name: round(float(iou * 100), 2)
+            for name, iou in zip(CLASS_NAMES, per_class_iou)
+        },
+    }
+
+    json_path = os.path.join(results_dir, "GeminiFusion_test_results.json")
+    with open(json_path, "w") as f:
+        json.dump(json_results, f, indent=2)
+
+    # Save results to TXT
+    txt_path = os.path.join(results_dir, "GeminiFusion_test_results.txt")
+    with open(txt_path, "w") as f:
+        f.write("=" * 60 + "\n")
+        f.write(f"GeminiFusion Test Evaluation Results\n")
+        f.write(f"Timestamp: {timestamp}\n")
+        f.write(f"Checkpoint: {args.resume}\n")
+        f.write(f"GPU: {gpu_name}\n")
+        f.write("=" * 60 + "\n\n")
+
+        f.write("SUMMARY\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"mIoU (All):      {miou:.2f}%\n")
+        f.write(f"mIoU (Static):   {static_iou:.2f}%  (17 classes)\n")
+        f.write(f"mIoU (Dynamic):  {dynamic_iou:.2f}%  (2 classes)\n")
+        f.write(f"Global Accuracy: {glob_acc:.2f}%\n")
+        f.write(f"Mean Accuracy:   {mean_acc:.2f}%\n\n")
+
+        f.write("INFERENCE SPEED\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Avg time/image:  {avg_time_ms:.1f} ms\n")
+        f.write(f"FPS:             {fps:.2f}\n")
+        f.write(f"Total images:    {num_images}\n")
+        f.write(f"Window/Stride:   {args.window_size}/{args.stride}\n\n")
+
+        f.write("PER-CLASS IoU\n")
+        f.write("-" * 40 + "\n")
+        for i, (name, iou) in enumerate(zip(CLASS_NAMES, per_class_iou)):
+            cls_type = "[D]" if i >= 17 else "[S]"
+            f.write(f"  {cls_type} {i:2d}. {name:20s}: {iou*100:5.2f}%\n")
+        f.write("-" * 40 + "\n")
+
+    print(f"\nResults saved to:")
+    print(f"  JSON: {json_path}")
+    print(f"  TXT:  {txt_path}")
 
     return miou
 
