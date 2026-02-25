@@ -33,7 +33,7 @@ from torch.cuda.amp import autocast, GradScaler
 
 from utils import *
 import utils.helpers as helpers
-from utils.optimizer import PolyWarmupAdamW
+from utils.optimizer import PolyWarmupAdamW, get_fair_param_groups
 from models.segformer import WeTr
 from torch import distributed as dist
 from torch.utils.data.distributed import DistributedSampler
@@ -1143,23 +1143,7 @@ def main():
         )
 
     optimizer = PolyWarmupAdamW(
-        params=[
-            {
-                "params": param_groups[0],
-                "lr": base_lr,
-                "weight_decay": args.weight_decay,
-            },
-            {
-                "params": param_groups[1],
-                "lr": base_lr,
-                "weight_decay": 0.0,
-            },
-            {
-                "params": param_groups[2],
-                "lr": base_lr,  # Same LR as encoder for fair comparison (no 10x)
-                "weight_decay": args.weight_decay,
-            },
-        ],
+        params=get_fair_param_groups(segmenter, lr=base_lr, weight_decay=args.weight_decay),
         lr=base_lr,
         weight_decay=args.weight_decay,
         betas=[0.9, 0.999],

@@ -24,8 +24,8 @@ def get_optimizer(model, cfg):
     lr = opt_cfg.get('LR', 6e-5)
     weight_decay = opt_cfg.get('WEIGHT_DECAY', 0.01)
 
-    # Get parameters (can add layer-wise learning rate decay here)
-    params = model.parameters()
+    # Fair benchmark policy: same LR for all params, no weight decay on norm/bias/1D params
+    params = get_param_groups(model, lr=lr, weight_decay=weight_decay)
 
     if opt_name == 'adamw':
         betas = opt_cfg.get('BETAS', [0.9, 0.999])
@@ -83,8 +83,8 @@ def get_param_groups(model, lr, weight_decay, lr_decay_layers=None, lr_decay_rat
         if not param.requires_grad:
             continue
 
-        # No weight decay for bias and normalization layers
-        if 'bias' in name or 'norm' in name or 'bn' in name:
+        # No weight decay for bias, normalization layers, and 1D params (e.g., LN/BN weights)
+        if param.ndim == 1 or 'bias' in name or 'norm' in name or 'bn' in name:
             no_decay_params.append(param)
         else:
             decay_params.append(param)

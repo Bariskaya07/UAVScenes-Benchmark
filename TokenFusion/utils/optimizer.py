@@ -18,6 +18,38 @@ from torch.optim.lr_scheduler import LambdaLR
 import math
 
 
+def get_fair_param_groups(model, lr, weight_decay):
+    """Fair benchmark param grouping shared across models.
+
+    Policy:
+    - Same LR for all params
+    - No weight decay for bias / normalization params / 1D params
+    - Standard weight decay for the rest
+    """
+    decay_params = []
+    no_decay_params = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        is_no_decay = (
+            param.ndim == 1
+            or name.endswith(".bias")
+            or "norm" in name.lower()
+            or "bn" in name.lower()
+        )
+        if is_no_decay:
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+
+    return [
+        {'params': decay_params, 'lr': lr, 'weight_decay': weight_decay},
+        {'params': no_decay_params, 'lr': lr, 'weight_decay': 0.0},
+    ]
+
+
 class PolyWarmupAdamW:
     """
     AdamW optimizer with polynomial learning rate decay and linear warmup.
@@ -44,11 +76,13 @@ class PolyWarmupAdamW:
         betas=(0.9, 0.999),
         warmup_iter=1500,
         max_iter=40000,
+        warmup_ratio=0.1,
         power=1.0
     ):
         self.base_lr = lr
         self.warmup_iter = warmup_iter
         self.max_iter = max_iter
+        self.warmup_ratio = warmup_ratio
         self.power = power
 
         # Create AdamW optimizer
@@ -79,12 +113,14 @@ class PolyWarmupAdamW:
         """
         if current_iter < self.warmup_iter:
             # Linear warmup from warmup_ratio to 1.0 (matching CMNeXt)
-            warmup_ratio = 0.1  # CMNeXt paper setting
             alpha = float(current_iter) / float(max(1, self.warmup_iter))
-            return warmup_ratio + (1 - warmup_ratio) * alpha
+            return self.warmup_ratio + (1 - self.warmup_ratio) * alpha
         else:
             # Polynomial decay
-            return (1 - (current_iter - self.warmup_iter) / (self.max_iter - self.warmup_iter)) ** self.power
+            decay_den = max(1, self.max_iter - self.warmup_iter)
+            progress = float(current_iter - self.warmup_iter) / float(decay_den)
+            progress = min(max(progress, 0.0), 1.0)
+            return (1 - progress) ** self.power
 
     def step(self):
         """Perform optimization step and update LR."""
@@ -132,7 +168,7 @@ class WarmupPolyLR:
         optimizer,
         warmup_iter=1500,
         max_iter=40000,
-        warmup_ratio=1e-6,
+        warmup_ratio=0.1,
         power=1.0
     ):
         self.optimizer = optimizer
@@ -179,21 +215,8 @@ def get_optimizer(model, cfg):
     Returns:
         PolyWarmupAdamW optimizer
     """
-    # Get parameter groups
-    param_groups = model.get_param_groups()
-
-    # Different LR for different parameter groups
-    # encoder non-norm: base_lr
-    # encoder norm: base_lr * 10
-    # decoder: base_lr * 10
     base_lr = getattr(cfg, 'lr', 6e-5)
-    lr_mult = getattr(cfg, 'lr_mult', 10.0)
-
-    params = [
-        {'params': param_groups[0], 'lr': base_lr, 'weight_decay': cfg.weight_decay},
-        {'params': param_groups[1], 'lr': base_lr * lr_mult, 'weight_decay': 0.0},
-        {'params': param_groups[2], 'lr': base_lr * lr_mult, 'weight_decay': cfg.weight_decay}
-    ]
+    params = get_fair_param_groups(model, lr=base_lr, weight_decay=getattr(cfg, 'weight_decay', 0.01))
 
     optimizer = PolyWarmupAdamW(
         params,
@@ -201,13 +224,14 @@ def get_optimizer(model, cfg):
         weight_decay=getattr(cfg, 'weight_decay', 0.01),
         warmup_iter=getattr(cfg, 'warmup_iter', 1500),
         max_iter=getattr(cfg, 'max_iter', 40000),
+        warmup_ratio=getattr(cfg, 'warmup_ratio', 0.1),
         power=getattr(cfg, 'power', 1.0)
     )
 
     return optimizer
 
 
-def create_optimizer(model, lr=6e-5, weight_decay=0.01, warmup_iter=1500, max_iter=40000):
+def create_optimizer(model, lr=6e-5, weight_decay=0.01, warmup_iter=1500, max_iter=40000, warmup_ratio=0.1):
     """
     Create optimizer with default settings.
 
@@ -237,5 +261,6 @@ def create_optimizer(model, lr=6e-5, weight_decay=0.01, warmup_iter=1500, max_it
         lr=lr,
         weight_decay=weight_decay,
         warmup_iter=warmup_iter,
-        max_iter=max_iter
+        max_iter=max_iter,
+        warmup_ratio=warmup_ratio
     )

@@ -35,7 +35,7 @@ except ImportError:
 from models import WeTr
 from datasets import UAVScenesDataset
 from utils.transforms import TrainTransform, ValTransform, TestTransform
-from utils.optimizer import PolyWarmupAdamW
+from utils.optimizer import PolyWarmupAdamW, get_fair_param_groups
 from utils.metrics import ConfusionMatrix, print_metrics, UAVSCENES_CLASSES, UAVScenesMetrics
 from utils.helpers import (
     setup_logger, save_checkpoint, load_checkpoint,
@@ -417,11 +417,13 @@ def main():
 
     # Build optimizer
     optimizer = PolyWarmupAdamW(
-        model.parameters(),
+        get_fair_param_groups(model, lr=cfg.optimizer.lr, weight_decay=cfg.optimizer.weight_decay),
         lr=cfg.optimizer.lr,
         weight_decay=cfg.optimizer.weight_decay,
+        betas=tuple(cfg.optimizer.betas),
         warmup_iter=cfg.optimizer.warmup_iter,
         max_iter=max_iter,
+        warmup_ratio=getattr(cfg.scheduler, 'warmup_ratio', 0.1),
         power=cfg.optimizer.power
     )
 
