@@ -1,0 +1,131 @@
+# HRFuser UAVScenes Configuration
+# RGB + HAG Multi-Modal Semantic Segmentation
+# Fair comparison settings matching TokenFusion, CMNeXt, DFormerv2, GeminiFusion
+
+# ==============================================================================
+# Dataset Configuration
+# ==============================================================================
+dataset:
+  name: "UAVScenes"
+  data_path: "/home/bariskaya/Projelerim/UAV/UAVScenesData"
+  num_classes: 19
+  ignore_label: 255
+
+# ==============================================================================
+# Model Configuration
+# ==============================================================================
+model:
+  backbone: "hrfuser_t"
+  embedding_dim: 256
+  in_channels: [18, 36, 72, 144]
+  drop_path_rate: 0.0
+  num_fused_modalities: 1
+  mod_in_channels: [3]
+
+  # Pretrained HRFormer-T ImageNet weights (RGB stream only)
+  pretrained: "pretrained/hrt_tiny.pth"
+
+# ==============================================================================
+# Training Configuration
+# ==============================================================================
+training:
+  # Image size (768x768 for fair comparison)
+  image_size: 768
+  crop_size: 768
+
+  # Batch size (8 for fair comparison)
+  batch_size: 8
+  num_workers: 8
+
+  # Training schedule
+  epochs: 60
+
+  # Validation frequency
+  val_every: 5
+  save_every: 10
+
+  # Random seed
+  seed: 42
+
+  # Mixed precision training
+  amp: true
+
+  # Freeze batch norm
+  freeze_bn: true
+
+# ==============================================================================
+# Optimizer Configuration
+# ==============================================================================
+optimizer:
+  type: AdamW
+  lr: 6.0e-5
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+
+# ==============================================================================
+# Scheduler Configuration
+# ==============================================================================
+scheduler:
+  type: PolyLR
+  power: 0.9
+  warmup_type: linear
+  warmup_epochs: 3
+  warmup_ratio: 0.1
+
+  # Layer-wise learning rate multiplier
+  lr_mult: 10.0  # For norm layers and decoder
+
+# ==============================================================================
+# Data Augmentation (Standardized - matching CMNeXt)
+# ==============================================================================
+augmentation:
+  scale_range: [0.5, 2.0]
+  crop_size: [768, 768]
+  flip_prob: 0.5
+  color_jitter_p: 0.2
+  gaussian_blur_p: 0.2
+  gaussian_blur_kernel: [3, 3]
+
+# ==============================================================================
+# HAG (Height Above Ground) Configuration
+# ==============================================================================
+hag:
+  max_meters: 50.0
+  aux_channels: 3
+
+# ==============================================================================
+# Normalization
+# ==============================================================================
+normalization:
+  rgb_mean: [0.485, 0.456, 0.406]
+  rgb_std: [0.229, 0.224, 0.225]
+
+# ==============================================================================
+# Evaluation Configuration
+# ==============================================================================
+evaluation:
+  val_mode: "whole"     # Match benchmark validation protocol
+  test_mode: "slide"    # test.py already uses sliding window settings below
+  slide_size: 768
+  slide_stride: 512
+
+# ==============================================================================
+# Logging and Checkpointing
+# ==============================================================================
+logging:
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  print_freq: 20
+
+# ==============================================================================
+# Fair Comparison Checklist
+# ==============================================================================
+# Same as TokenFusion, CMNeXt, DFormerv2, GeminiFusion:
+# - 768x768 training resolution
+# - Batch size 8
+# - HAG normalization 50m max
+# - Same train/val/test scene split (13/3/4 scenes)
+# - Same 19 class label mapping
+# - Sliding window evaluation 768x768 stride 512
+# - AdamW lr=6e-5, PolyLR power=0.9, warmup 3 epochs
+# - 60 epochs, seed=42
