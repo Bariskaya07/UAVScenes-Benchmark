@@ -34,6 +34,7 @@ DATASET:
   ROOT          : 'data/UAVScenes'                                  # Symlink to actual data
   IGNORE_LABEL  : 255                                               # Ignore index
   AUX_CHANNELS  : 3                                                 # Dataset aux channels (3=stacked for backward compat)
+  HAG_MAX_METERS: 50.0                                              # Match benchmark standard
   # 2 modalities for UAVScenes (RGB + HAG)
   MODALS        : ['image', 'hag']
 
@@ -44,10 +45,11 @@ TRAIN:
   IMAGE_SIZE    : [768, 768]      # Training size (fair comparison with CMNeXt/DFormerV2)
   BATCH_SIZE    : 8               # Same as CMNeXt/DFormerV2
   EPOCHS        : 60              # Training epochs
-  EVAL_START    : 10              # Start evaluation after epoch 10
+  EVAL_START    : 5               # Start evaluation at epoch 5 (match benchmark)
   EVAL_INTERVAL : 5               # Evaluate every 5 epochs
   AMP           : true            # Mixed precision for memory efficiency
   DDP           : false           # Single GPU mode
+  FREEZE_BN     : true            # Match benchmark training policy
 
 # -------------------------------------------------------------------------
 # LOSS FUNCTION

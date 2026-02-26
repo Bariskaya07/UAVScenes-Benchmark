@@ -166,8 +166,21 @@ def main(cfg):
     eval_path = os.path.join(os.path.dirname(eval_cfg['MODEL_PATH']), 'eval_{}.txt'.format(exp_time))
 
     for case in cases:
+        dataset_extra_kwargs = {}
+        if cfg['DATASET']['NAME'] == 'UAVScenes':
+            dataset_extra_kwargs = {
+                'hag_max_meters': cfg['DATASET'].get('HAG_MAX_METERS', 50.0),
+                'aux_channels': cfg['DATASET'].get('AUX_CHANNELS', 3),
+            }
         # Use split from config (set via --split argument)
-        dataset = eval(cfg['DATASET']['NAME'])(cfg['DATASET']['ROOT'], split, transform, cfg['DATASET']['MODALS'], case)
+        dataset = eval(cfg['DATASET']['NAME'])(
+            cfg['DATASET']['ROOT'],
+            split,
+            transform,
+            cfg['DATASET']['MODALS'],
+            case,
+            **dataset_extra_kwargs,
+        )
 
         model = eval(cfg['MODEL']['NAME'])(cfg['MODEL']['BACKBONE'], dataset.n_classes, cfg['DATASET']['MODALS'])
         state_dict = torch.load(model_path, map_location='cpu', weights_only=False)

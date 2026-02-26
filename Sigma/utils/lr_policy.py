@@ -37,11 +37,15 @@ class WarmUpPolyLR(BaseLR):
     def get_lr(self, cur_iter):
         if cur_iter < self.warmup_steps:
             # Linear warmup from warmup_ratio to 1.0 (matching CMNeXt)
-            alpha = cur_iter / self.warmup_steps
+            alpha = cur_iter / max(1.0, self.warmup_steps)
             return self.start_lr * (self.warmup_ratio + (1 - self.warmup_ratio) * alpha)
         else:
-            return self.start_lr * (
-                    (1 - float(cur_iter) / self.total_iters) ** self.lr_power)
+            # CMNeXt/TokenFusion-style post-warmup normalized polynomial decay
+            decay_start = float(self.warmup_steps)
+            decay_den = max(1.0, self.total_iters - decay_start)
+            progress = (float(cur_iter) - decay_start) / decay_den
+            progress = min(max(progress, 0.0), 1.0)
+            return self.start_lr * ((1 - progress) ** self.lr_power)
 
 
 class MultiStageLR(BaseLR):

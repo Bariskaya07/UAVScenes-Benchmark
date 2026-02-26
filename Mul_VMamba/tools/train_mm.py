@@ -1,5 +1,6 @@
 import os
 import torch 
+import torch.nn as nn
 import argparse
 import yaml
 import time
@@ -41,8 +42,15 @@ def main(cfg, gpu, save_dir):
     traintransform = get_train_augmentation(train_cfg['IMAGE_SIZE'], seg_fill=dataset_cfg['IGNORE_LABEL'])
     valtransform = get_val_augmentation(eval_cfg['IMAGE_SIZE'])
 
-    trainset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'train', traintransform, dataset_cfg['MODALS'])
-    valset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'val', valtransform, dataset_cfg['MODALS'])
+    dataset_extra_kwargs = {}
+    if dataset_cfg['NAME'] == 'UAVScenes':
+        dataset_extra_kwargs = {
+            'hag_max_meters': dataset_cfg.get('HAG_MAX_METERS', 50.0),
+            'aux_channels': dataset_cfg.get('AUX_CHANNELS', 3),
+        }
+
+    trainset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'train', traintransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
+    valset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'val', valtransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
     class_names = trainset.CLASSES
 
     model = eval(model_cfg['NAME'])(model_cfg['BACKBONE'], trainset.n_classes, dataset_cfg['MODALS'])
@@ -60,7 +68,21 @@ def main(cfg, gpu, save_dir):
     loss_fn = get_loss(loss_cfg['NAME'], trainset.ignore_label, None)
     start_epoch = 0
     optimizer = get_optimizer(model, optim_cfg['NAME'], lr, optim_cfg['WEIGHT_DECAY'])
-    scheduler = get_scheduler(sched_cfg['NAME'], optimizer, int((epochs+1)*iters_per_epoch), sched_cfg['POWER'], iters_per_epoch * sched_cfg['WARMUP'], sched_cfg['WARMUP_RATIO'])
+    scheduler = get_scheduler(
+        sched_cfg['NAME'],
+        optimizer,
+        int(epochs * iters_per_epoch),
+        sched_cfg['POWER'],
+        iters_per_epoch * sched_cfg['WARMUP'],
+        sched_cfg['WARMUP_RATIO']
+    )
+
+    def apply_freeze_bn_if_needed(net):
+        if not train_cfg.get('FREEZE_BN', False):
+            return
+        for m in net.modules():
+            if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                m.eval()
 
     if train_cfg['DDP']: 
         sampler = DistributedSampler(trainset, dist.get_world_size(), dist.get_rank(), shuffle=True)
@@ -100,6 +122,7 @@ def main(cfg, gpu, save_dir):
 
     for epoch in range(start_epoch, epochs):
         model.train()
+        apply_freeze_bn_if_needed(model)
         if train_cfg['DDP']: sampler.set_epoch(epoch)
 
         train_loss = 0.0        
@@ -134,7 +157,7 @@ def main(cfg, gpu, save_dir):
             writer.add_scalar('train/loss', train_loss, epoch)
         torch.cuda.empty_cache()
 
-        if ((epoch+1) % train_cfg['EVAL_INTERVAL'] == 0 and (epoch+1)>train_cfg['EVAL_START']) or (epoch+1) == epochs:
+        if ((epoch+1) % train_cfg['EVAL_INTERVAL'] == 0 and (epoch+1) >= train_cfg['EVAL_START']) or (epoch+1) == epochs:
             if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
                 # Get eval mode from config (default: whole for fast validation)
                 eval_mode = eval_cfg.get('MODE', 'whole')
@@ -195,7 +218,7 @@ def main(cfg, gpu, save_dir):
             logger.info(f"Loaded best checkpoint: {best_ckpt}")
 
         # Create test dataloader
-        testset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'test', valtransform, dataset_cfg['MODALS'])
+        testset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'test', valtransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
         testloader = DataLoader(testset, batch_size=eval_cfg['BATCH_SIZE'], num_workers=num_workers, pin_memory=False)
         logger.info(f"Test set: {len(testset)} samples")
 

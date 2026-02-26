@@ -67,7 +67,7 @@ def photometric_distortion(rgb, brightness=0.2, contrast=0.2, saturation=0.2, hu
     return rgb
 
 
-def gaussian_blur(rgb, prob=0.5, kernel_size=5):
+def gaussian_blur(rgb, prob=0.2, kernel_size=3):
     """
     Random Gaussian blur for RGB only (standardized with CMNeXt).
     Does NOT apply to modal_x (HAG) since it would corrupt geometric data.
@@ -85,6 +85,8 @@ class TrainPre(object):
         # Augmentation settings (standardized with CMNeXt)
         self.use_photometric = getattr(config, 'use_photometric', True)
         self.use_gaussian_blur = getattr(config, 'use_gaussian_blur', True)
+        self.gaussian_blur_prob = getattr(config, 'gaussian_blur_prob', 0.2)
+        self.gaussian_blur_kernel = getattr(config, 'gaussian_blur_kernel', 3)
 
     def __call__(self, rgb, gt, modal_x):
         rgb, gt, modal_x = random_mirror(rgb, gt, modal_x)
@@ -97,7 +99,7 @@ class TrainPre(object):
 
         # Gaussian blur (RGB only, standardized with CMNeXt)
         if self.use_gaussian_blur:
-            rgb = gaussian_blur(rgb, prob=0.5, kernel_size=5)
+            rgb = gaussian_blur(rgb, prob=self.gaussian_blur_prob, kernel_size=self.gaussian_blur_kernel)
 
         rgb = normalize(rgb, self.norm_mean, self.norm_std)
         modal_x = normalize(modal_x, self.norm_mean, self.norm_std)

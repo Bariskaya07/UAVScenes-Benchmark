@@ -3,6 +3,7 @@ from torch.optim import AdamW, SGD
 
 
 def get_optimizer(model: nn.Module, optimizer: str, lr: float, weight_decay: float = 0.01):
+    optimizer = optimizer.lower()
     wd_params, nwd_params = [], []
     for p in model.parameters():
         if p.requires_grad:

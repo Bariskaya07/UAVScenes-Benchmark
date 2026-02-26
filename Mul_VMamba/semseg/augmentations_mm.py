@@ -60,6 +60,9 @@ class RandomColorJitter:
         self.hue = hue
 
     def __call__(self, sample: list) -> list:
+        if random.random() >= self.p:
+            return sample
+
         # Apply each distortion with 50% probability (like CMNeXt)
         if random.random() < 0.5:
             brightness_factor = random.uniform(1 - self.brightness, 1 + self.brightness)
@@ -120,7 +123,7 @@ class RandomGaussianBlur:
 
     Does NOT apply to other modalities (HAG) since it would corrupt geometric data.
     """
-    def __init__(self, kernel_size: int = 5, p: float = 0.5) -> None:
+    def __init__(self, kernel_size: int = 3, p: float = 0.2) -> None:
         self.kernel_size = kernel_size if isinstance(kernel_size, (list, tuple)) else [kernel_size, kernel_size]
         self.p = p
 
@@ -394,14 +397,14 @@ def get_train_augmentation(size: Union[int, Tuple[int], List[int]], seg_fill: in
     Augmentations:
     - RandomColorJitter: brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1
     - RandomHorizontalFlip: p=0.5
-    - RandomGaussianBlur: kernel=5, p=0.5
+    - RandomGaussianBlur: kernel=3, p=0.2
     - RandomResizedCrop: scale=(0.5, 2.0)
     - Normalize: ImageNet mean/std
     """
     return Compose([
-        RandomColorJitter(p=1.0, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # Always apply (each sub-distortion has 50% prob)
+        RandomColorJitter(p=0.2, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         RandomHorizontalFlip(p=0.5),
-        RandomGaussianBlur(kernel_size=5, p=0.5),  # Kernel 5, prob 0.5 (CMNeXt settings)
+        RandomGaussianBlur(kernel_size=3, p=0.2),
         RandomResizedCrop(size, scale=(0.5, 2.0), seg_fill=seg_fill),
         Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
     ])

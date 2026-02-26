@@ -122,7 +122,10 @@ C.num_workers = 8
 # Augmentation (Standardized with CMNeXt for fair comparison)
 C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2.0]  # Scale range 0.5-2.0
 C.use_photometric = True   # Photometric distortion (brightness, contrast, saturation, hue)
-C.use_gaussian_blur = True  # Gaussian blur (p=0.5, kernel=5)
+C.use_gaussian_blur = True  # Gaussian blur enabled
+C.gaussian_blur_prob = 0.2  # Match benchmark standard
+C.gaussian_blur_kernel = 3  # Match benchmark standard
+C.freeze_bn = True          # Match benchmark training policy (Gemini/Token/CMNeXt/HRFuser)
 C.warm_up_epoch = 3   # Warmup epochs (5% of total)
 
 C.fix_bias = True

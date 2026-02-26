@@ -141,6 +141,13 @@ with Engine(custom_parser=parser) as engine:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
 
+    def apply_freeze_bn_if_needed(net):
+        if not getattr(config, 'freeze_bn', False):
+            return
+        for m in net.modules():
+            if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                m.eval()
+
     engine.register_state(dataloader=train_loader, model=model,
                           optimizer=optimizer)
     if engine.continue_state_object:
@@ -148,6 +155,7 @@ with Engine(custom_parser=parser) as engine:
 
     optimizer.zero_grad()
     model.train()
+    apply_freeze_bn_if_needed(model)
     logger.info('begin trainning:')
     
     # Initialize the evaluation dataset and evaluator
@@ -277,6 +285,7 @@ with Engine(custom_parser=parser) as engine:
                                 os.remove(checkpoint_path)
                         
                     model.train()
+                    apply_freeze_bn_if_needed(model)
         else:
             if (epoch >= config.checkpoint_start_epoch) and (epoch - config.checkpoint_start_epoch) % config.checkpoint_step == 0:
                 model.eval() 
@@ -306,6 +315,7 @@ with Engine(custom_parser=parser) as engine:
                         if os.path.exists(checkpoint_path):
                             os.remove(checkpoint_path)
                 model.train()
+                apply_freeze_bn_if_needed(model)
 
     # Final evaluation on test set with slide mode
     logger.info("\n" + "=" * 60)

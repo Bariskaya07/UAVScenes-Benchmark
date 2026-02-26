@@ -182,6 +182,9 @@ class UAVScenes(Dataset):
         case=None,
         hag_max_meters: float = 50.0,
         aux_channels: int = 3,
+        color_jitter_prob: float = 0.2,
+        gaussian_blur_prob: float = 0.2,
+        gaussian_blur_kernel: int = 3,
     ) -> None:
         """
         Args:
@@ -203,6 +206,9 @@ class UAVScenes(Dataset):
         self.modals = modals
         self.hag_max_meters = hag_max_meters
         self.aux_channels = aux_channels
+        self.color_jitter_prob = color_jitter_prob
+        self.gaussian_blur_prob = gaussian_blur_prob
+        self.gaussian_blur_kernel = gaussian_blur_kernel
 
         # Crop sizes for training (768x768 for fair comparison with CMNeXt/DFormerV2)
         self.base_size = 768
@@ -293,11 +299,12 @@ class UAVScenes(Dataset):
         return sample_list, label
 
     def transform_tr(self, sample):
-        """Training transforms: RandomHorizontalFlip, RandomScaleCrop, Normalize, ToTensor"""
+        """Training transforms standardized for fair benchmark comparison."""
         composed_transforms = Compose([
+            RandomColorJitter(prob=self.color_jitter_prob, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
             RandomHorizontalFlip(),
             RandomScaleCrop(base_size=self.base_size, crop_size=self.crop_size, fill=255),
-            RandomGaussianBlur(),
+            RandomGaussianBlur(prob=self.gaussian_blur_prob, kernel_size=self.gaussian_blur_kernel),
             Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensor(),
         ])
@@ -429,12 +436,60 @@ class RandomHorizontalFlip:
         return sample
 
 
+class RandomColorJitter:
+    """Photometric distortion for RGB only with benchmark-standard parameters."""
+    def __init__(self, prob=0.2, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1):
+        self.prob = prob
+        self.brightness = brightness
+        self.contrast = contrast
+        self.saturation = saturation
+        self.hue = hue
+
+    def __call__(self, sample):
+        if random.random() >= self.prob:
+            return sample
+
+        img = np.clip(sample['image'].astype(np.float32), 0.0, 1.0)
+
+        if random.random() < 0.5:
+            factor = random.uniform(1 - self.brightness, 1 + self.brightness)
+            img = np.clip(img * factor, 0.0, 1.0)
+
+        if random.random() < 0.5:
+            factor = random.uniform(1 - self.contrast, 1 + self.contrast)
+            mean = img.mean(axis=(0, 1), keepdims=True)
+            img = np.clip((img - mean) * factor + mean, 0.0, 1.0)
+
+        do_saturation = random.random() < 0.5
+        do_hue = random.random() < 0.5
+        if do_saturation or do_hue:
+            hsv = cv2.cvtColor((img * 255.0).astype(np.uint8), cv2.COLOR_RGB2HSV)
+
+            if do_saturation:
+                sat_factor = random.uniform(1 - self.saturation, 1 + self.saturation)
+                hsv[..., 1] = np.clip(hsv[..., 1].astype(np.float32) * sat_factor, 0, 255).astype(np.uint8)
+
+            if do_hue:
+                hue_delta = random.uniform(-self.hue, self.hue) * 180.0
+                hsv[..., 0] = np.mod(hsv[..., 0].astype(np.float32) + hue_delta, 180.0).astype(np.uint8)
+
+            img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
+
+        sample['image'] = img
+        return sample
+
+
 class RandomGaussianBlur:
     """Random Gaussian blur for data augmentation."""
+    def __init__(self, prob=0.2, kernel_size=3):
+        self.prob = prob
+        self.kernel_size = int(kernel_size)
+        if self.kernel_size % 2 == 0:
+            self.kernel_size += 1
+
     def __call__(self, sample):
-        if random.random() < 0.5:
-            radius = random.random()
-            sample['image'] = cv2.GaussianBlur(sample['image'], (0, 0), radius)
+        if random.random() < self.prob:
+            sample['image'] = cv2.GaussianBlur(sample['image'], (self.kernel_size, self.kernel_size), 0)
             # Don't blur HAG - it's geometric data
         return sample
 
