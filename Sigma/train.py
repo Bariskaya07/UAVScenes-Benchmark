@@ -294,7 +294,7 @@ with Engine(custom_parser=parser) as engine:
                     segmentor = SegEvaluator(dataset=val_dataset, class_num=config.num_classes,
                                             norm_mean=config.norm_mean, norm_std=config.norm_std,
                                             network=model, multi_scales=config.eval_scale_array,
-                                            is_flip=config.eval_flip, devices=[1,2,3],
+                                            is_flip=config.eval_flip, devices=devices_val,
                                             verbose=False, config=config,
                                             )
                     _, mean_IoU = segmentor.run(config.checkpoint_dir, str(epoch), config.val_log_file,
