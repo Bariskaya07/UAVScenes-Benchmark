@@ -61,7 +61,9 @@ def create_dataloader(cfg, split='test'):
         root=dataset_cfg['ROOT'],
         split=split,
         transform=transform,
-        modals=dataset_cfg['MODALS']
+        modals=dataset_cfg['MODALS'],
+        aux_channels=dataset_cfg.get('AUX_CHANNELS', 3),
+        hag_max_meters=dataset_cfg.get('HAG_MAX_METERS', 50.0),
     )
 
     dataloader = DataLoader(

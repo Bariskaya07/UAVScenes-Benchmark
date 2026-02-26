@@ -72,6 +72,9 @@ training:
   # Mixed precision training
   amp: true
 
+  # Keep BatchNorm running stats fixed for fair parity (GeminiFusion/HRFuser)
+  freeze_bn: true
+
 # ==============================================================================
 # Optimizer Configuration
 # ==============================================================================

@@ -89,7 +89,9 @@ def create_dataloader(cfg, split='train'):
         root=dataset_cfg['ROOT'],
         split=split,
         transform=transform,
-        modals=dataset_cfg['MODALS']
+        modals=dataset_cfg['MODALS'],
+        aux_channels=dataset_cfg.get('AUX_CHANNELS', 3),
+        hag_max_meters=dataset_cfg.get('HAG_MAX_METERS', 50.0),
     )
 
     # Create dataloader
@@ -131,6 +133,10 @@ def create_model(cfg):
 def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, device, epoch, cfg, writer):
     """Train for one epoch."""
     model.train()
+    if cfg['TRAIN'].get('FREEZE_BN', False):
+        for module in model.modules():
+            if isinstance(module, nn.BatchNorm2d):
+                module.eval()
     total_loss = 0.0
     num_batches = len(dataloader)
     log_interval = cfg.get('LOGGING', {}).get('LOG_INTERVAL', 50)

@@ -143,7 +143,7 @@ class UAVScenes(Dataset):
         'interval5_HKisland_GNSS_Evening',
     ]
 
-    def __init__(self, root, split='train', transform=None, modals=['img', 'hag'], aux_channels=3):
+    def __init__(self, root, split='train', transform=None, modals=['img', 'hag'], aux_channels=3, hag_max_meters=50.0):
         """
         Args:
             root: Path to UAVScenes data root
@@ -153,6 +153,7 @@ class UAVScenes(Dataset):
             aux_channels: Number of channels for auxiliary modality (1 or 3)
                          - 1: Native single-channel HAG (recommended for new models)
                          - 3: Stack HAG to 3 channels (backward compatibility)
+            hag_max_meters: Maximum HAG height for normalization (benchmark parity)
         """
         super().__init__()
         self.root = Path(root)
@@ -160,6 +161,7 @@ class UAVScenes(Dataset):
         self.transform = transform
         self.modals = modals
         self.aux_channels = aux_channels
+        self.hag_max_meters = float(hag_max_meters)
 
         # Create label remapping LUT (fast O(1) lookup)
         self.label_map = create_label_map()
@@ -277,7 +279,7 @@ class UAVScenes(Dataset):
         hag_meters = (hag_raw.astype(np.float32) - 20000) / 1000.0
 
         # Normalize to 0-1 range (50m max with safety margin)
-        hag_normalized = np.clip(hag_meters / 50.0, 0, 1)
+        hag_normalized = np.clip(hag_meters / self.hag_max_meters, 0, 1)
 
         # Return based on aux_channels configuration
         if self.aux_channels == 1:

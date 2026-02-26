@@ -33,6 +33,7 @@ DATASET:
   NAME: UAVScenes
   ROOT: data/UAVScenes       # Symlink to actual data
   IGNORE_LABEL: 255          # Ignore index for loss computation
+  HAG_MAX_METERS: 50.0       # HAG normalization divisor for benchmark parity
   AUX_CHANNELS: 3            # Dataset aux channels (3=stacked HAG for backward compat)
   MODALS:
     - img                    # RGB (hub modality)
@@ -62,6 +63,7 @@ TRAIN:
   AMP: true                  # Mixed Precision for memory efficiency
   DDP: false                 # Single GPU mode
   WORKERS: 8                 # Data loading workers
+  FREEZE_BN: true            # Match GeminiFusion/HRFuser benchmark training policy
 
   # Early Stopping - Disabled because whole mode validation underestimates small objects
   EARLY_STOP:

@@ -236,6 +236,10 @@ def compute_loss(outputs, target, masks, lamda, ignore_label=255):
 def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, logger):
     """Train for one epoch."""
     model.train()
+    if getattr(cfg.training, 'freeze_bn', False):
+        for module in model.modules():
+            if isinstance(module, nn.BatchNorm2d):
+                module.eval()
 
     loss_meter = AverageMeter()
     seg_loss_meter = AverageMeter()
