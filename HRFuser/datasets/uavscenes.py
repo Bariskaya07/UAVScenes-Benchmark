@@ -120,7 +120,7 @@ def load_hag(hag_path, max_height=50.0, aux_channels=3):
     hag_raw = cv2.imread(hag_path, cv2.IMREAD_UNCHANGED)
 
     if hag_raw is None:
-        raise FileNotFoundError(f"HAG file not found: {hag_path}")
+        raise FileNotFoundError(f"HAG file not found or unreadable: {hag_path}")
 
     # Decode HAG values (meters)
     hag_meters = (hag_raw.astype(np.float32) - 20000.0) / 1000.0
@@ -199,13 +199,16 @@ class UAVScenesDataset(Dataset):
             scenes = TEST_SCENES
 
         # Build file list
-        self.samples = self._build_file_list(scenes)
+        self.samples, skipped = self._build_file_list(scenes)
 
         print(f"UAVScenes {split}: {len(self.samples)} samples from {len(scenes)} scenes (aux_channels={aux_channels})")
+        if skipped > 0:
+            print(f"UAVScenes {split}: skipped {skipped} samples with missing/empty files")
 
     def _build_file_list(self, scenes):
         """Build list of (rgb_path, hag_path, label_path) tuples."""
         samples = []
+        skipped = 0
 
         for scene in scenes:
             # RGB path pattern
@@ -240,8 +243,12 @@ class UAVScenesDataset(Dataset):
                 hag_path = os.path.join(hag_dir, f"{timestamp}.png")
                 label_path = os.path.join(label_dir, f"{timestamp}.png")
 
-                # Only add if all files exist
+                # Only add if all files exist and are non-empty.
+                # Some exports contain missing/empty HAG PNGs (known issue).
                 if os.path.exists(hag_path) and os.path.exists(label_path):
+                    if os.path.getsize(hag_path) <= 0 or os.path.getsize(label_path) <= 0:
+                        skipped += 1
+                        continue
                     samples.append({
                         'rgb': rgb_path,
                         'hag': hag_path,
@@ -249,8 +256,10 @@ class UAVScenesDataset(Dataset):
                         'scene': scene,
                         'timestamp': timestamp
                     })
+                else:
+                    skipped += 1
 
-        return samples
+        return samples, skipped
 
     def set_stage(self, stage):
         """Set stage (train/val) for compatibility with GeminiFusion's training loop."""
@@ -260,33 +269,45 @@ class UAVScenesDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        sample_info = self.samples[idx]
+        # Be robust against rare missing/corrupt files at runtime.
+        # If one sample fails to load, try a few neighboring samples.
+        max_tries = 8
+        for offset in range(max_tries):
+            real_idx = (idx + offset) % len(self.samples)
+            sample_info = self.samples[real_idx]
+            try:
+                # Load RGB image
+                rgb = np.array(Image.open(sample_info['rgb']).convert('RGB'))
 
-        # Load RGB image
-        rgb = np.array(Image.open(sample_info['rgb']).convert('RGB'))
+                # Load HAG (normalized, aux_channels determines 1 or 3 channels)
+                hag = load_hag(sample_info['hag'], max_height=self.hag_max_height, aux_channels=self.aux_channels)
 
-        # Load HAG (normalized, aux_channels determines 1 or 3 channels)
-        hag = load_hag(sample_info['hag'], max_height=self.hag_max_height, aux_channels=self.aux_channels)
+                # Convert HAG to uint8 range [0, 255] for consistency with RGB
+                hag = (hag * 255).astype(np.uint8)
 
-        # Convert HAG to uint8 range [0, 255] for consistency with RGB
-        hag = (hag * 255).astype(np.uint8)
+                # Load and remap label
+                label = np.array(Image.open(sample_info['label']))
+                label = remap_labels(label)
 
-        # Load and remap label
-        label = np.array(Image.open(sample_info['label']))
-        label = remap_labels(label)
+                # Create sample dict - use 'depth' key for HAG (GeminiFusion compatibility)
+                sample = {
+                    'rgb': rgb,
+                    'depth': hag,  # Named 'depth' for GeminiFusion compatibility
+                    'mask': label,
+                }
 
-        # Create sample dict - use 'depth' key for HAG (GeminiFusion compatibility)
-        sample = {
-            'rgb': rgb,
-            'depth': hag,  # Named 'depth' for GeminiFusion compatibility
-            'mask': label,
-        }
+                # Apply transforms
+                if self.transform is not None:
+                    sample = self.transform(sample)
 
-        # Apply transforms
-        if self.transform is not None:
-            sample = self.transform(sample)
+                return sample
+            except (FileNotFoundError, OSError):
+                continue
 
-        return sample
+        raise FileNotFoundError(
+            f"Failed to load sample at idx={idx} after {max_tries} retries; "
+            "dataset likely has many missing/corrupt files."
+        )
 
     @property
     def num_classes(self):
