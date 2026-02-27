@@ -7,7 +7,7 @@
 # ==============================================================================
 dataset:
   name: "UAVScenes"
-  data_path: "/home/bariskaya/Projelerim/UAV/UAVScenesData"
+  data_path: "data/UAVScenes"  # VM: ln -s ~/data/UAVScenesData data/UAVScenes
   num_classes: 19
   ignore_label: 255
 

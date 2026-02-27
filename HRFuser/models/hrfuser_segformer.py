@@ -162,7 +162,9 @@ class HRFuserSegFormer(nn.Module):
         if pretrained_path is None:
             return
 
-        checkpoint = torch.load(pretrained_path, map_location='cpu')
+        # PyTorch>=2.6 defaults to weights_only=True; HRFormer checkpoints may
+        # include non-tensor metadata (e.g., yacs CfgNode), so disable it here.
+        checkpoint = torch.load(pretrained_path, map_location='cpu', weights_only=False)
 
         # Handle different checkpoint formats
         if 'model' in checkpoint:
