@@ -39,6 +39,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
 from torch.amp import autocast, GradScaler
 
 from models.hrfuser_segformer import HRFuserSegFormer
@@ -87,10 +90,16 @@ def load_config(config_path):
 # Logging
 # ---------------------------------------------------------------------------
 
-def setup_logger(log_dir=None, name='hrfuser'):
+def setup_logger(log_dir=None, name='hrfuser', is_main=True):
     """Setup logger for training."""
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
+    logger.propagate = False
+    logger.handlers.clear()
+
+    if not is_main:
+        logger.addHandler(logging.NullHandler())
+        return logger
 
     # Console handler
     console_handler = logging.StreamHandler()
@@ -151,6 +160,28 @@ def set_seed(seed):
         torch.backends.cudnn.benchmark = False
 
 
+def setup_distributed():
+    """Initialize torch.distributed if launched with torchrun."""
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    distributed = world_size > 1
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+
+    if distributed:
+        dist.init_process_group(backend='nccl', init_method='env://')
+        torch.cuda.set_device(local_rank)
+        device = torch.device('cuda', local_rank)
+    else:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    return distributed, rank, world_size, local_rank, device
+
+
+def cleanup_distributed(distributed):
+    if distributed and dist.is_initialized():
+        dist.destroy_process_group()
+
+
 def count_parameters(model):
     """Count trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -204,7 +235,7 @@ def load_checkpoint(filename, model, optimizer=None, device='cuda'):
 # Data
 # ---------------------------------------------------------------------------
 
-def build_dataloaders(cfg):
+def build_dataloaders(cfg, distributed=False, rank=0, world_size=1):
     """Build training and validation dataloaders."""
     from torchvision import transforms
     from utils.transforms import ToTensor
@@ -247,10 +278,25 @@ def build_dataloaders(cfg):
     )
 
     # Create dataloaders
+    global_batch_size = cfg.training.batch_size
+    if distributed:
+        if global_batch_size % world_size != 0:
+            raise ValueError(
+                f"Global batch_size ({global_batch_size}) must be divisible by WORLD_SIZE ({world_size}). "
+                f"Use a divisible value, e.g. {world_size}, {2 * world_size}, ..."
+            )
+        per_gpu_batch_size = global_batch_size // world_size
+        train_sampler = DistributedSampler(
+            train_dataset, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True)
+    else:
+        per_gpu_batch_size = global_batch_size
+        train_sampler = None
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=cfg.training.batch_size,
-        shuffle=True,
+        batch_size=per_gpu_batch_size,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=cfg.training.num_workers,
         pin_memory=True,
         drop_last=True
@@ -264,7 +310,7 @@ def build_dataloaders(cfg):
         pin_memory=True
     )
 
-    return train_loader, val_loader
+    return train_loader, val_loader, train_sampler, per_gpu_batch_size
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +385,7 @@ def slide_inference(model, rgb, hag, num_classes, crop_size, stride):
 # ---------------------------------------------------------------------------
 
 def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
-                    epoch, device, scaler, logger):
+                    epoch, device, scaler, logger, distributed=False, world_size=1, is_main=True):
     """Train for one epoch."""
     model.train()
 
@@ -389,7 +435,7 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
         end = time.time()
 
         # Logging
-        if (i + 1) % cfg.logging.print_freq == 0:
+        if is_main and (i + 1) % cfg.logging.print_freq == 0:
             current_lr = optimizer.param_groups[0]['lr']
             logger.info(
                 f'Epoch [{epoch}][{i + 1}/{num_iters}] '
@@ -399,7 +445,11 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
                 f'Batch: {batch_time.avg:.3f}s'
             )
 
-    return loss_meter.avg
+    epoch_loss = torch.tensor(loss_meter.avg, dtype=torch.float32, device=device)
+    if distributed:
+        dist.all_reduce(epoch_loss, op=dist.ReduceOp.SUM)
+        epoch_loss /= world_size
+    return float(epoch_loss.item())
 
 
 # ---------------------------------------------------------------------------
@@ -535,37 +585,45 @@ def validate(model, val_loader, cfg, device, logger):
 def main():
     args = parse_args()
 
+    distributed, rank, world_size, local_rank, device = setup_distributed()
+    is_main = (rank == 0)
+
     # Load config
     cfg = load_config(args.config)
 
     # Setup logging
-    os.makedirs(cfg.logging.log_dir, exist_ok=True)
-    os.makedirs(cfg.logging.checkpoint_dir, exist_ok=True)
-    logger = setup_logger(cfg.logging.log_dir)
+    if is_main:
+        os.makedirs(cfg.logging.log_dir, exist_ok=True)
+        os.makedirs(cfg.logging.checkpoint_dir, exist_ok=True)
+    logger = setup_logger(cfg.logging.log_dir, is_main=is_main)
 
     logger.info(f"Config: {args.config}")
     logger.info(f"Backbone: {cfg.model.backbone}")
     logger.info(f"Image size: {cfg.training.image_size}")
-    logger.info(f"Batch size: {cfg.training.batch_size}")
+    logger.info(f"Global batch size: {cfg.training.batch_size}")
     logger.info(f"Epochs: {cfg.training.epochs}")
     logger.info(f"LR: {cfg.optimizer.lr}")
     logger.info(f"AMP: {cfg.training.amp}")
 
-    # Set seed
-    set_seed(cfg.training.seed)
+    # Set seed (rank-shifted for DDP workers)
+    set_seed(cfg.training.seed + rank)
 
-    # Device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logger.info(f"Using device: {device}")
+    logger.info(
+        f"Using device: {device} | distributed={distributed} rank={rank} "
+        f"world_size={world_size} local_rank={local_rank}"
+    )
 
     # Build model
     model = build_model(cfg, device)
     logger.info(f"Model parameters: {count_parameters(model) / 1e6:.2f}M")
+    raw_model = model
 
     # Build dataloaders
-    train_loader, val_loader = build_dataloaders(cfg)
+    train_loader, val_loader, train_sampler, per_gpu_batch_size = build_dataloaders(
+        cfg, distributed=distributed, rank=rank, world_size=world_size)
     logger.info(f"Train samples: {len(train_loader.dataset)}")
     logger.info(f"Val samples: {len(val_loader.dataset)}")
+    logger.info(f"Per-GPU batch size: {per_gpu_batch_size}")
 
     # Calculate total iterations for PolyLR
     iters_per_epoch = len(train_loader)
@@ -580,7 +638,7 @@ def main():
     lr = cfg.optimizer.lr
 
     optimizer = PolyWarmupAdamW(
-        params=get_fair_param_groups(model, lr=lr, weight_decay=cfg.optimizer.weight_decay),
+        params=get_fair_param_groups(raw_model, lr=lr, weight_decay=cfg.optimizer.weight_decay),
         lr=lr,
         weight_decay=cfg.optimizer.weight_decay,
         betas=cfg.optimizer.betas,
@@ -602,7 +660,7 @@ def main():
 
     if args.resume:
         logger.info(f"Resuming from: {args.resume}")
-        info = load_checkpoint(args.resume, model, optimizer, device)
+        info = load_checkpoint(args.resume, raw_model, optimizer, device)
         start_epoch = info['epoch']
         best_miou = info.get('best_miou', 0)
         # Keep LR schedule continuous on resume (avoid warmup restart).
@@ -615,9 +673,21 @@ def main():
             )
         logger.info(f"Resumed at epoch {start_epoch}, best mIoU: {best_miou:.2f}%")
 
+    if distributed:
+        model = DDP(
+            raw_model,
+            device_ids=[local_rank],
+            output_device=local_rank,
+            find_unused_parameters=False
+        )
+
     # Evaluation only
     if args.eval_only:
-        metrics = validate(model, val_loader, cfg, device, logger)
+        if is_main:
+            _ = validate(raw_model, val_loader, cfg, device, logger)
+        if distributed:
+            dist.barrier()
+            cleanup_distributed(distributed)
         return
 
     # Training loop
@@ -625,6 +695,9 @@ def main():
     training_start = time.time()
 
     for epoch in range(start_epoch, cfg.training.epochs):
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+
         logger.info(f"\n{'='*60}")
         logger.info(f"Epoch {epoch + 1}/{cfg.training.epochs}")
         logger.info(f"{'='*60}")
@@ -632,54 +705,61 @@ def main():
         # Train
         train_loss = train_one_epoch(
             model, train_loader, optimizer, criterion, cfg,
-            epoch + 1, device, scaler, logger
+            epoch + 1, device, scaler, logger,
+            distributed=distributed, world_size=world_size, is_main=is_main
         )
 
         logger.info(f"Epoch {epoch + 1} train loss: {train_loss:.4f}")
 
         # Validate
         if (epoch + 1) % cfg.training.val_every == 0 or epoch == cfg.training.epochs - 1:
-            metrics = validate(model, val_loader, cfg, device, logger)
-            current_miou = metrics['miou']
+            if is_main:
+                metrics = validate(raw_model, val_loader, cfg, device, logger)
+                current_miou = metrics['miou']
 
-            # Save best model
-            is_best = current_miou > best_miou
-            if is_best:
-                best_miou = current_miou
-                logger.info(f"New best mIoU: {best_miou:.2f}%")
+                # Save best model
+                is_best = current_miou > best_miou
+                if is_best:
+                    best_miou = current_miou
+                    logger.info(f"New best mIoU: {best_miou:.2f}%")
 
-            # Save checkpoint
-            save_checkpoint(
-                {
-                    'epoch': epoch + 1,
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'best_miou': best_miou,
-                    'metrics': {k: v.tolist() if isinstance(v, np.ndarray) else v
-                                for k, v in metrics.items()},
-                },
-                filename=os.path.join(cfg.logging.checkpoint_dir,
-                                      f'checkpoint_epoch_{epoch + 1}.pth'),
-                is_best=is_best,
-                best_filename=os.path.join(cfg.logging.checkpoint_dir, 'best.pth')
-            )
+                # Save checkpoint
+                save_checkpoint(
+                    {
+                        'epoch': epoch + 1,
+                        'model': raw_model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'best_miou': best_miou,
+                        'metrics': {k: v.tolist() if isinstance(v, np.ndarray) else v
+                                    for k, v in metrics.items()},
+                    },
+                    filename=os.path.join(cfg.logging.checkpoint_dir,
+                                          f'checkpoint_epoch_{epoch + 1}.pth'),
+                    is_best=is_best,
+                    best_filename=os.path.join(cfg.logging.checkpoint_dir, 'best.pth')
+                )
+
+            if distributed:
+                dist.barrier()
 
         # Regular checkpoint save
         elif (epoch + 1) % cfg.training.save_every == 0:
-            save_checkpoint(
-                {
-                    'epoch': epoch + 1,
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'best_miou': best_miou,
-                },
-                filename=os.path.join(cfg.logging.checkpoint_dir,
-                                      f'checkpoint_epoch_{epoch + 1}.pth')
-            )
+            if is_main:
+                save_checkpoint(
+                    {
+                        'epoch': epoch + 1,
+                        'model': raw_model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'best_miou': best_miou,
+                    },
+                    filename=os.path.join(cfg.logging.checkpoint_dir,
+                                          f'checkpoint_epoch_{epoch + 1}.pth')
+                )
 
     total_time = (time.time() - training_start) / 60.0
     logger.info(f"\nTraining completed in {total_time:.1f} minutes!")
     logger.info(f"Best mIoU: {best_miou:.2f}%")
+    cleanup_distributed(distributed)
 
 
 if __name__ == '__main__':
