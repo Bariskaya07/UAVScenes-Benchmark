@@ -302,9 +302,10 @@ def build_dataloaders(cfg, distributed=False, rank=0, world_size=1):
         drop_last=True
     )
 
+    val_batch_size = int(getattr(cfg.evaluation, 'batch_size', 8))
     val_loader = DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=val_batch_size,
         shuffle=False,
         num_workers=cfg.training.num_workers,
         pin_memory=True

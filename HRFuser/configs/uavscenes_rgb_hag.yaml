@@ -105,6 +105,7 @@ normalization:
 # ==============================================================================
 evaluation:
   val_mode: "whole"     # Match benchmark validation protocol
+  batch_size: 8         # Validation batch size
   test_mode: "slide"    # test.py already uses sliding window settings below
   slide_size: 768
   slide_stride: 512
