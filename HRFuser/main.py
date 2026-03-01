@@ -43,6 +43,11 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from torch.amp import autocast, GradScaler
+try:
+    from fvcore.nn import FlopCountAnalysis
+    FVCORE_AVAILABLE = True
+except ImportError:
+    FVCORE_AVAILABLE = False
 
 from models.hrfuser_segformer import HRFuserSegFormer
 from datasets.uavscenes import UAVScenesDataset, CLASS_NAMES
@@ -185,6 +190,41 @@ def cleanup_distributed(distributed):
 def count_parameters(model):
     """Count trainable parameters."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def log_model_complexity(model, cfg, logger, device, is_main=True):
+    """Log parameter counts and FLOPs at training start."""
+    if not is_main:
+        return
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(
+        f"Parameters: {total_params / 1e6:.2f}M total, "
+        f"{trainable_params / 1e6:.2f}M trainable"
+    )
+
+    if not FVCORE_AVAILABLE:
+        logger.info("FLOPs: fvcore not installed (pip install fvcore)")
+        return
+
+    # Use benchmark input size for reported complexity.
+    h = int(cfg.training.image_size)
+    w = int(cfg.training.image_size)
+    was_training = model.training
+    try:
+        model.eval()
+        with torch.no_grad():
+            rgb = torch.zeros(1, 3, h, w, device=device)
+            hag = torch.zeros(1, 3, h, w, device=device)
+            flops = FlopCountAnalysis(model, (rgb, hag))
+            total_flops = flops.total()
+        logger.info(f"FLOPs (1x3x{h}x{w} RGB + 1x3x{h}x{w} HAG): {total_flops / 1e9:.2f} GFLOPs")
+    except Exception as e:
+        logger.info(f"FLOPs: could not calculate ({e})")
+    finally:
+        if was_training:
+            model.train()
 
 
 def save_checkpoint(state, filename='checkpoint.pth', is_best=False, best_filename='best.pth'):
@@ -618,7 +658,7 @@ def main():
 
     # Build model
     model = build_model(cfg, device)
-    logger.info(f"Model parameters: {count_parameters(model) / 1e6:.2f}M")
+    log_model_complexity(model, cfg, logger, device, is_main=is_main)
     raw_model = model
 
     # Build dataloaders
