@@ -205,7 +205,7 @@ def log_model_complexity(model, cfg, logger, device, is_main=True):
     )
 
     if not FVCORE_AVAILABLE:
-        logger.info("FLOPs: fvcore not installed (pip install fvcore)")
+        logger.info("FLOPs: fvcore not installed (pip install -r requirements.txt)")
         return
 
     # Use benchmark input size for reported complexity.
