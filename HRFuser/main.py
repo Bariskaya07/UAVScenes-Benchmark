@@ -29,7 +29,7 @@ import random
 import shutil
 import logging
 import warnings
-from datetime import datetime
+from datetime import datetime, timedelta
 
 warnings.filterwarnings("ignore")
 
@@ -173,7 +173,14 @@ def setup_distributed():
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
 
     if distributed:
-        dist.init_process_group(backend='nccl', init_method='env://')
+        # Validation runs only on rank0, so other ranks can wait at barrier for a long time.
+        # Increase process group timeout to avoid NCCL watchdog timeouts during validation.
+        timeout_minutes = int(os.environ.get("DDP_TIMEOUT_MINUTES", "60"))
+        dist.init_process_group(
+            backend='nccl',
+            init_method='env://',
+            timeout=timedelta(minutes=timeout_minutes),
+        )
         torch.cuda.set_device(local_rank)
         device = torch.device('cuda', local_rank)
     else:
