@@ -116,7 +116,7 @@ evaluation:
 logging:
   log_dir: "logs"
   checkpoint_dir: "checkpoints"
-  print_freq: 20
+  print_freq: 50
 
 # ==============================================================================
 # Fair Comparison Checklist
