@@ -478,8 +478,6 @@ def validate(model, val_loader, cfg, device, logger):
         rgb = sample['rgb'].to(device).float()
         hag = sample['depth'].to(device).float()
         target = sample['mask']
-        gt = target[0].data.cpu().numpy().astype(np.uint8)
-        gt_idx = gt < num_classes
 
         if eval_mode == 'whole':
             output = model(rgb, hag)
@@ -493,20 +491,24 @@ def validate(model, val_loader, cfg, device, logger):
                 model, rgb, hag, num_classes,
                 cfg.evaluation.slide_size, cfg.evaluation.slide_stride)
 
-        # Convert to prediction
-        pred = cv2.resize(
-            output[0, :num_classes].data.cpu().numpy().transpose(1, 2, 0),
-            target.size()[1:][::-1],
-            interpolation=cv2.INTER_CUBIC
-        ).argmax(axis=2).astype(np.uint8)
+        # Convert to prediction and update confusion matrix for all samples in batch
+        batch_size = target.shape[0]
+        for b in range(batch_size):
+            gt = target[b].data.cpu().numpy().astype(np.uint8)
+            gt_idx = gt < num_classes
 
-        # Update confusion matrix
-        mask = np.ones_like(gt[gt_idx]) == 1
-        k = (gt[gt_idx] >= 0) & (pred[gt_idx] < num_classes) & mask
-        conf_mat += np.bincount(
-            num_classes * gt[gt_idx][k].astype(int) + pred[gt_idx][k],
-            minlength=num_classes ** 2
-        ).reshape(num_classes, num_classes)
+            pred = cv2.resize(
+                output[b, :num_classes].data.cpu().numpy().transpose(1, 2, 0),
+                target.size()[1:][::-1],
+                interpolation=cv2.INTER_CUBIC
+            ).argmax(axis=2).astype(np.uint8)
+
+            mask = np.ones_like(gt[gt_idx]) == 1
+            k = (gt[gt_idx] >= 0) & (pred[gt_idx] < num_classes) & mask
+            conf_mat += np.bincount(
+                num_classes * gt[gt_idx][k].astype(int) + pred[gt_idx][k],
+                minlength=num_classes ** 2
+            ).reshape(num_classes, num_classes)
 
         if (i + 1) % 100 == 0:
             logger.info(f'Validated {i + 1}/{len(val_loader)} samples')
