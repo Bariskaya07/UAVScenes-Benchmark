@@ -2,7 +2,8 @@
 HRFuser Test Script for UAVScenes Dataset
 
 Standalone evaluation script with sliding window inference.
-Produces per-class IoU, mIoU (overall, static, dynamic), pixel accuracy, and mean accuracy.
+Produces per-class IoU/Precision/Recall/F1/Accuracy/Support, mIoU
+(overall, static, dynamic), and inference speed (latency/FPS).
 
 Usage:
     python test.py --config configs/uavscenes_rgb_hag.yaml --ckpt-path checkpoints/best.pth
@@ -232,6 +233,9 @@ def main():
             if (i + 1) % 100 == 0:
                 print(f"Processed {i + 1}/{len(dataset)} images")
 
+    if conf_mat.sum() == 0:
+        raise RuntimeError("Confusion matrix is empty. Check labels/predictions in test set.")
+
     # Compute metrics
     with np.errstate(divide='ignore', invalid='ignore'):
         tp = np.diag(conf_mat)
@@ -240,12 +244,25 @@ def main():
         union = tp + fp + fn
         iou = np.where(union > 0, tp / union, 0)
 
-        pixel_acc = tp.sum() / conf_mat.sum() * 100.0
         class_total = conf_mat.sum(axis=1)
         class_acc = np.where(class_total > 0, tp / class_total, 0)
         valid_mask = class_total > 0
+        support = class_total.astype(np.int64)
+
+        precision = np.where(tp + fp > 0, tp / (tp + fp), 0)
+        recall = np.where(tp + fn > 0, tp / (tp + fn), 0)
+        f1 = np.where(
+            precision + recall > 0,
+            2 * precision * recall / (precision + recall),
+            0
+        )
+
+        pixel_acc = tp.sum() / conf_mat.sum() * 100.0
         mean_acc = np.nanmean(class_acc[valid_mask]) * 100.0
         miou = np.nanmean(iou[valid_mask]) * 100.0
+        mean_precision = np.nanmean(precision[valid_mask]) * 100.0
+        mean_recall = np.nanmean(recall[valid_mask]) * 100.0
+        mean_f1 = np.nanmean(f1[valid_mask]) * 100.0
 
         # Static mIoU (classes 0-16)
         static_mask = np.zeros(num_classes, dtype=bool)
@@ -261,50 +278,80 @@ def main():
         dynamic_miou = np.nanmean(iou[dynamic_valid]) * 100.0 if dynamic_valid.any() else 0.0
 
     # Results
-    latency = all_times / len(dataset)
-    fps = 1.0 / latency if latency > 0 else 0
+    latency = all_times / max(len(dataset), 1)
+    fps = 1.0 / latency if latency > 0 else 0.0
 
-    print(f"\n{'='*60}")
-    print(f"HRFuser-T UAVScenes Test Results ({args.split} split)")
-    print(f"{'='*60}")
-    print(f"Checkpoint: {args.ckpt_path}")
-    print(f"Total images: {len(dataset)}")
-    print(f"Total time: {all_times:.1f}s")
-    print(f"Latency: {latency*1000:.1f}ms")
-    print(f"FPS: {fps:.1f}")
-
-    print(f"\nmIoU:         {miou:.2f}%")
-    print(f"Static mIoU:  {static_miou:.2f}%")
-    print(f"Dynamic mIoU: {dynamic_miou:.2f}%")
-    print(f"Pixel Acc:    {pixel_acc:.2f}%")
-    print(f"Mean Acc:     {mean_acc:.2f}%")
-
-    # Per-class IoU
-    print(f"\nPer-class IoU:")
-    print(f"{'-'*40}")
-    for cls_idx, cls_name in enumerate(CLASS_NAMES):
-        marker = " (dynamic)" if cls_idx >= 17 else ""
-        print(f"  {cls_idx:2d}. {cls_name:<20s}: {iou[cls_idx]*100:5.2f}%{marker}")
-    print(f"{'-'*40}")
-    print(f"  {'mIoU':<24s}: {miou:5.2f}%")
+    print(f"\nmIoU: {miou:.2f}% | Static: {static_miou:.2f}% | "
+          f"Dynamic: {dynamic_miou:.2f}% | Acc: {pixel_acc:.2f}%")
+    print("\n" + "=" * 100)
+    print(f"{'Class':<20} {'IoU':>8} {'Prec':>8} {'Recall':>8} {'F1':>8} {'Acc':>8} {'Support':>12}")
+    print("-" * 100)
+    for cls_idx, cls_name in enumerate(CLASS_NAMES[:num_classes]):
+        if support[cls_idx] <= 0:
+            continue
+        cls_type = "[D]" if cls_idx >= 17 else "[S]"
+        print(
+            f"  {cls_type} {cls_name:<15} "
+            f"{iou[cls_idx] * 100:>7.2f}% "
+            f"{precision[cls_idx] * 100:>7.2f}% "
+            f"{recall[cls_idx] * 100:>7.2f}% "
+            f"{f1[cls_idx] * 100:>7.2f}% "
+            f"{class_acc[cls_idx] * 100:>7.2f}% "
+            f"{support[cls_idx]:>11,}"
+        )
+    print("-" * 100)
+    print(f"  {'mIoU':<18} {miou:>7.2f}%")
+    print(f"  {'Static mIoU':<18} {static_miou:>7.2f}%")
+    print(f"  {'Dynamic mIoU':<18} {dynamic_miou:>7.2f}%")
+    print(f"  {'Pixel Accuracy':<18} {pixel_acc:>7.2f}%")
+    print(f"  {'Mean Accuracy':<18} {mean_acc:>7.2f}%")
+    print(f"  {'Mean Precision':<18} {mean_precision:>7.2f}%")
+    print(f"  {'Mean Recall':<18} {mean_recall:>7.2f}%")
+    print(f"  {'Mean F1':<18} {mean_f1:>7.2f}%")
+    print("=" * 100)
+    print("\nInference speed:")
+    print(f"  Average time per image: {latency * 1000:.1f}ms")
+    print(f"  FPS: {fps:.2f}")
 
     # Save results to file
     results_path = os.path.join(args.save_dir, "results.txt")
     with open(results_path, 'w') as f:
         f.write(f"HRFuser-T UAVScenes Test Results ({args.split} split)\n")
         f.write(f"Checkpoint: {args.ckpt_path}\n")
-        f.write(f"Config: {args.config}\n\n")
-        f.write(f"mIoU: {miou:.2f}%\n")
-        f.write(f"Static mIoU: {static_miou:.2f}%\n")
-        f.write(f"Dynamic mIoU: {dynamic_miou:.2f}%\n")
-        f.write(f"Pixel Accuracy: {pixel_acc:.2f}%\n")
-        f.write(f"Mean Accuracy: {mean_acc:.2f}%\n\n")
-        f.write(f"Per-class IoU:\n")
-        for cls_idx, cls_name in enumerate(CLASS_NAMES):
-            marker = " (dynamic)" if cls_idx >= 17 else ""
-            f.write(f"  {cls_idx:2d}. {cls_name:<20s}: {iou[cls_idx]*100:5.2f}%{marker}\n")
-        f.write(f"\nLatency: {latency*1000:.1f}ms\n")
-        f.write(f"FPS: {fps:.1f}\n")
+        f.write(f"Config: {args.config}\n")
+        f.write(f"Total images: {len(dataset)}\n")
+        f.write(f"Total time: {all_times:.1f}s\n\n")
+
+        f.write(f"mIoU: {miou:.2f}% | Static: {static_miou:.2f}% | "
+                f"Dynamic: {dynamic_miou:.2f}% | Acc: {pixel_acc:.2f}%\n\n")
+        f.write(f"{'Class':<20} {'IoU':>8} {'Prec':>8} {'Recall':>8} {'F1':>8} {'Acc':>8} {'Support':>12}\n")
+        f.write("-" * 100 + "\n")
+        for cls_idx, cls_name in enumerate(CLASS_NAMES[:num_classes]):
+            if support[cls_idx] <= 0:
+                continue
+            cls_type = "[D]" if cls_idx >= 17 else "[S]"
+            f.write(
+                f"  {cls_type} {cls_name:<15} "
+                f"{iou[cls_idx] * 100:>7.2f}% "
+                f"{precision[cls_idx] * 100:>7.2f}% "
+                f"{recall[cls_idx] * 100:>7.2f}% "
+                f"{f1[cls_idx] * 100:>7.2f}% "
+                f"{class_acc[cls_idx] * 100:>7.2f}% "
+                f"{support[cls_idx]:>11,}\n"
+            )
+        f.write("-" * 100 + "\n")
+        f.write(f"  {'mIoU':<18} {miou:>7.2f}%\n")
+        f.write(f"  {'Static mIoU':<18} {static_miou:>7.2f}%\n")
+        f.write(f"  {'Dynamic mIoU':<18} {dynamic_miou:>7.2f}%\n")
+        f.write(f"  {'Pixel Accuracy':<18} {pixel_acc:>7.2f}%\n")
+        f.write(f"  {'Mean Accuracy':<18} {mean_acc:>7.2f}%\n")
+        f.write(f"  {'Mean Precision':<18} {mean_precision:>7.2f}%\n")
+        f.write(f"  {'Mean Recall':<18} {mean_recall:>7.2f}%\n")
+        f.write(f"  {'Mean F1':<18} {mean_f1:>7.2f}%\n")
+        f.write("=" * 100 + "\n\n")
+        f.write("Inference speed:\n")
+        f.write(f"  Average time per image: {latency * 1000:.1f}ms\n")
+        f.write(f"  FPS: {fps:.2f}\n")
     print(f"\nResults saved to {results_path}")
 
 

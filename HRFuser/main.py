@@ -520,12 +520,15 @@ def validate(model, val_loader, cfg, device, logger):
     mode_str = "whole image" if eval_mode == 'whole' else "sliding window"
     logger.info(f"Running validation with {mode_str} inference...")
     start_time = time.time()
+    inference_time = 0.0
+    inference_samples = 0
 
     for i, sample in enumerate(val_loader):
         rgb = sample['rgb'].to(device).float()
         hag = sample['depth'].to(device).float()
         target = sample['mask']
 
+        infer_start = time.time()
         if eval_mode == 'whole':
             output = model(rgb, hag)
             if output.shape[2:] != tuple(target.size()[1:]):
@@ -537,6 +540,8 @@ def validate(model, val_loader, cfg, device, logger):
             output = slide_inference(
                 model, rgb, hag, num_classes,
                 cfg.evaluation.slide_size, cfg.evaluation.slide_stride)
+        inference_time += time.time() - infer_start
+        inference_samples += target.shape[0]
 
         # Convert to prediction and update confusion matrix for all samples in batch
         batch_size = target.shape[0]
@@ -565,7 +570,24 @@ def validate(model, val_loader, cfg, device, logger):
 
     # Compute metrics
     if conf_mat.sum() == 0:
-        return {'miou': 0, 'pixel_acc': 0, 'mean_acc': 0, 'class_iou': np.zeros(num_classes)}
+        return {
+            'miou': 0.0,
+            'static_miou': 0.0,
+            'dynamic_miou': 0.0,
+            'pixel_acc': 0.0,
+            'mean_acc': 0.0,
+            'mean_precision': 0.0,
+            'mean_recall': 0.0,
+            'mean_f1': 0.0,
+            'latency_ms': 0.0,
+            'fps': 0.0,
+            'class_iou': np.zeros(num_classes),
+            'class_acc': np.zeros(num_classes),
+            'class_precision': np.zeros(num_classes),
+            'class_recall': np.zeros(num_classes),
+            'class_f1': np.zeros(num_classes),
+            'class_support': np.zeros(num_classes, dtype=np.int64),
+        }
 
     with np.errstate(divide='ignore', invalid='ignore'):
         # Per-class IoU
@@ -587,6 +609,19 @@ def validate(model, val_loader, cfg, device, logger):
         # mIoU
         miou = np.nanmean(iou[valid_mask]) * 100.0
 
+        # Per-class precision/recall/F1
+        precision = np.where(tp + fp > 0, tp / (tp + fp), 0)
+        recall = np.where(tp + fn > 0, tp / (tp + fn), 0)
+        f1 = np.where(
+            precision + recall > 0,
+            2 * precision * recall / (precision + recall),
+            0
+        )
+        support = class_total.astype(np.int64)
+        mean_precision = np.nanmean(precision[valid_mask]) * 100.0
+        mean_recall = np.nanmean(recall[valid_mask]) * 100.0
+        mean_f1 = np.nanmean(f1[valid_mask]) * 100.0
+
         # Static mIoU (classes 0-16)
         static_mask = np.zeros(num_classes, dtype=bool)
         static_mask[:17] = True
@@ -600,21 +635,46 @@ def validate(model, val_loader, cfg, device, logger):
         dynamic_valid = valid_mask & dynamic_mask
         dynamic_miou = np.nanmean(iou[dynamic_valid]) * 100.0 if dynamic_valid.any() else 0.0
 
-    # Print results
-    logger.info(f"\n{'='*60}")
-    logger.info(f"Evaluation Results")
-    logger.info(f"{'='*60}")
-    logger.info(f"  mIoU:         {miou:.2f}%")
-    logger.info(f"  Static mIoU:  {static_miou:.2f}%")
-    logger.info(f"  Dynamic mIoU: {dynamic_miou:.2f}%")
-    logger.info(f"  Pixel Acc:    {pixel_acc:.2f}%")
-    logger.info(f"  Mean Acc:     {mean_acc:.2f}%")
+    latency = inference_time / max(inference_samples, 1)
+    fps = 1.0 / latency if latency > 0 else 0.0
 
-    logger.info(f"\nPer-class IoU:")
-    for cls_idx, cls_name in enumerate(CLASS_NAMES):
-        marker = " (dynamic)" if cls_idx >= 17 else ""
-        logger.info(f"  {cls_idx:2d}. {cls_name:20s}: {iou[cls_idx]*100:5.2f}%{marker}")
-    logger.info(f"{'='*60}")
+    # Print results
+    logger.info(
+        f"\nmIoU: {miou:.2f}% | Static: {static_miou:.2f}% | "
+        f"Dynamic: {dynamic_miou:.2f}% | Acc: {pixel_acc:.2f}%"
+    )
+    logger.info("\n" + "=" * 100)
+    logger.info(
+        f"{'Class':<20} {'IoU':>8} {'Prec':>8} {'Recall':>8} "
+        f"{'F1':>8} {'Acc':>8} {'Support':>12}"
+    )
+    logger.info("-" * 100)
+    for cls_idx, cls_name in enumerate(CLASS_NAMES[:num_classes]):
+        if support[cls_idx] <= 0:
+            continue
+        cls_type = "[D]" if cls_idx >= 17 else "[S]"
+        logger.info(
+            f"  {cls_type} {cls_name:<15} "
+            f"{iou[cls_idx] * 100:>7.2f}% "
+            f"{precision[cls_idx] * 100:>7.2f}% "
+            f"{recall[cls_idx] * 100:>7.2f}% "
+            f"{f1[cls_idx] * 100:>7.2f}% "
+            f"{class_acc[cls_idx] * 100:>7.2f}% "
+            f"{support[cls_idx]:>11,}"
+        )
+    logger.info("-" * 100)
+    logger.info(f"  {'mIoU':<18} {miou:>7.2f}%")
+    logger.info(f"  {'Static mIoU':<18} {static_miou:>7.2f}%")
+    logger.info(f"  {'Dynamic mIoU':<18} {dynamic_miou:>7.2f}%")
+    logger.info(f"  {'Pixel Accuracy':<18} {pixel_acc:>7.2f}%")
+    logger.info(f"  {'Mean Accuracy':<18} {mean_acc:>7.2f}%")
+    logger.info(f"  {'Mean Precision':<18} {mean_precision:>7.2f}%")
+    logger.info(f"  {'Mean Recall':<18} {mean_recall:>7.2f}%")
+    logger.info(f"  {'Mean F1':<18} {mean_f1:>7.2f}%")
+    logger.info("=" * 100)
+    logger.info("\nInference speed:")
+    logger.info(f"  Average time per image: {latency * 1000:.1f}ms")
+    logger.info(f"  FPS: {fps:.2f}")
 
     metrics = {
         'miou': miou,
@@ -622,7 +682,17 @@ def validate(model, val_loader, cfg, device, logger):
         'dynamic_miou': dynamic_miou,
         'pixel_acc': pixel_acc,
         'mean_acc': mean_acc,
+        'mean_precision': mean_precision,
+        'mean_recall': mean_recall,
+        'mean_f1': mean_f1,
+        'latency_ms': latency * 1000.0,
+        'fps': fps,
         'class_iou': iou,
+        'class_acc': class_acc,
+        'class_precision': precision,
+        'class_recall': recall,
+        'class_f1': f1,
+        'class_support': support,
     }
 
     return metrics
