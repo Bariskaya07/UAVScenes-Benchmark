@@ -66,6 +66,15 @@ def load_config(config_path):
     return Config(config_dict)
 
 
+def load_torch_checkpoint(path, map_location):
+    """Load checkpoint with PyTorch>=2.6 and older-version compatibility."""
+    try:
+        # Checkpoints include more than raw tensor weights.
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location=map_location)
+
+
 # ---------------------------------------------------------------------------
 # Sliding window inference
 # ---------------------------------------------------------------------------
@@ -128,7 +137,7 @@ def main():
         mod_in_channels=cfg.model.mod_in_channels)
 
     # Load checkpoint
-    checkpoint = torch.load(args.ckpt_path, map_location='cpu')
+    checkpoint = load_torch_checkpoint(args.ckpt_path, map_location='cpu')
 
     # Handle different checkpoint formats
     if 'model' in checkpoint:

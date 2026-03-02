@@ -241,12 +241,23 @@ def save_checkpoint(state, filename='checkpoint.pth', is_best=False, best_filena
         shutil.copyfile(filename, best_filename)
 
 
+def load_torch_checkpoint(path, map_location):
+    """Load checkpoint with PyTorch>=2.6 and older-version compatibility."""
+    try:
+        # We save full training checkpoints (model/optimizer/metadata), so
+        # weights_only must be False on PyTorch 2.6+.
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        # PyTorch<2.6 does not have weights_only argument.
+        return torch.load(path, map_location=map_location)
+
+
 def load_checkpoint(filename, model, optimizer=None, device='cuda'):
     """Load checkpoint."""
     if not os.path.exists(filename):
         raise FileNotFoundError(f"Checkpoint not found: {filename}")
 
-    checkpoint = torch.load(filename, map_location=device)
+    checkpoint = load_torch_checkpoint(filename, map_location=device)
 
     # Handle different checkpoint formats
     if 'model' in checkpoint:
