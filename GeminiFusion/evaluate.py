@@ -16,7 +16,9 @@ import numpy as np
 import cv2
 import torch
 import torch.nn.functional as F
+import torch.distributed as dist
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
 from tqdm import tqdm
 from datetime import datetime
@@ -201,7 +203,19 @@ def sliding_window_inference(
 
 def evaluate(args):
     """Run evaluation."""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    distributed = world_size > 1
+    rank = 0
+    local_rank = 0
+
+    if distributed:
+        rank = int(os.environ.get("RANK", "0"))
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        dist.init_process_group(backend="nccl", init_method="env://")
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Determine output directory
     if args.output_dir:
@@ -252,17 +266,29 @@ def evaluate(args):
         hag_max_height=args.hag_max_height,
     )
 
+    sampler = None
+    if distributed:
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False,
+            drop_last=False,
+        )
+
     dataloader = DataLoader(
         dataset,
         batch_size=1,
         shuffle=False,
+        sampler=sampler,
         num_workers=4,
         pin_memory=True,
     )
 
-    print(f"Evaluating on {len(dataset)} samples...")
-    print(f"Sliding window: {args.window_size}x{args.window_size}, stride={args.stride}")
-    print(f"Results will be saved to: {results_dir}")
+    if rank == 0:
+        print(f"Evaluating on {len(dataset)} samples...")
+        print(f"Sliding window: {args.window_size}x{args.window_size}, stride={args.stride}")
+        print(f"Results will be saved to: {results_dir}")
 
     # Initialize confusion matrix
     conf_mat = np.zeros((args.num_classes, args.num_classes), dtype=np.int64)
@@ -276,14 +302,19 @@ def evaluate(args):
     total_time = 0.0
     num_images = 0
 
+    iterator = enumerate(dataloader)
+    if rank == 0:
+        iterator = tqdm(iterator, total=len(dataloader))
+
     with torch.no_grad():
-        for i, sample in tqdm(enumerate(dataloader), total=len(dataloader)):
+        for i, sample in iterator:
             rgb = sample["rgb"].to(device).float()
             hag = sample["depth"].to(device).float()
             gt = sample["mask"][0].numpy().astype(np.uint8)
 
             # Inference with timing
-            torch.cuda.synchronize()
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
             start_time = time.time()
 
             pred = sliding_window_inference(
@@ -293,9 +324,10 @@ def evaluate(args):
                 num_classes=args.num_classes,
             )
 
-            torch.cuda.synchronize()
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
             total_time += time.time() - start_time
-            num_images += 1
+            num_images += gt.shape[0] if gt.ndim == 3 else 1
 
             # Update confusion matrix (ignore label 255)
             valid_mask = gt < args.num_classes
@@ -307,6 +339,21 @@ def evaluate(args):
             if args.save_pred:
                 pred_path = os.path.join(pred_dir, f"pred_{i:04d}.png")
                 cv2.imwrite(pred_path, pred)
+
+    # Aggregate across ranks for correct multi-GPU metrics/speed
+    if distributed:
+        cm_tensor = torch.as_tensor(conf_mat, dtype=torch.int64, device=device)
+        dist.all_reduce(cm_tensor, op=dist.ReduceOp.SUM)
+        conf_mat = cm_tensor.cpu().numpy()
+
+        speed_tensor = torch.tensor(
+            [float(total_time), float(num_images)],
+            dtype=torch.float64,
+            device=device,
+        )
+        dist.all_reduce(speed_tensor, op=dist.ReduceOp.SUM)
+        total_time = float(speed_tensor[0].item())
+        num_images = int(round(float(speed_tensor[1].item())))
 
     if conf_mat.sum() == 0:
         raise RuntimeError("Confusion matrix is empty. Check predictions and labels.")
@@ -357,6 +404,13 @@ def evaluate(args):
 
     # GPU info
     gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
+
+    # Only rank0 prints/saves
+    if rank != 0:
+        if distributed and dist.is_initialized():
+            dist.barrier()
+            dist.destroy_process_group()
+        return miou
 
     # Print results
     print(f"\nmIoU: {miou:.2f}% | Static: {static_iou:.2f}% | Dynamic: {dynamic_iou:.2f}% | Acc: {glob_acc:.2f}%")
@@ -527,6 +581,10 @@ def evaluate(args):
     print(f"\nResults saved to:")
     print(f"  JSON: {json_path}")
     print(f"  TXT:  {txt_path}")
+
+    if distributed and dist.is_initialized():
+        dist.barrier()
+        dist.destroy_process_group()
 
     return miou
 
