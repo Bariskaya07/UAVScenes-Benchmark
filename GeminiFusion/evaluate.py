@@ -233,6 +233,7 @@ def evaluate(args):
         n_heads=args.n_heads,
         dpr=args.dpr,
         drop_rate=0.0,
+        load_pretrained=False,
     )
 
     # Load checkpoint

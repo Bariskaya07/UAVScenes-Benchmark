@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -312,6 +313,7 @@ class WeTr(nn.Module):
         n_heads=8,
         dpr=0.1,
         drop_rate=0.0,
+        load_pretrained=True,
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -356,14 +358,27 @@ class WeTr(nn.Module):
         else:
             self.encoder = getattr(mix_transformer, backbone)(n_heads, dpr, drop_rate)
             self.in_channels = self.encoder.embed_dims
-            ## initilize encoder
-            state_dict = torch.load("pretrained/" + backbone + ".pth")
-            state_dict.pop("head.weight")
-            state_dict.pop("head.bias")
-            state_dict = expand_state_dict(
-                self.encoder.state_dict(), state_dict, self.num_parallel
-            )
-            self.encoder.load_state_dict(state_dict, strict=True)
+            # Initialize encoder from ImageNet backbone weights during training.
+            # For pure evaluation from a full checkpoint, this can be skipped.
+            if load_pretrained:
+                pretrained_path = "pretrained/" + backbone + ".pth"
+                if not os.path.isfile(pretrained_path):
+                    raise FileNotFoundError(
+                        f"Pretrained backbone not found: {pretrained_path}. "
+                        "Either provide the file or set load_pretrained=False."
+                    )
+                try:
+                    state_dict = torch.load(
+                        pretrained_path, map_location="cpu", weights_only=False
+                    )
+                except TypeError:
+                    state_dict = torch.load(pretrained_path, map_location="cpu")
+                state_dict.pop("head.weight")
+                state_dict.pop("head.bias")
+                state_dict = expand_state_dict(
+                    self.encoder.state_dict(), state_dict, self.num_parallel
+                )
+                self.encoder.load_state_dict(state_dict, strict=True)
 
         self.decoder = SegFormerHead(
             feature_strides=self.feature_strides,
