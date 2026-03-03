@@ -308,47 +308,105 @@ def evaluate(args):
                 pred_path = os.path.join(pred_dir, f"pred_{i:04d}.png")
                 cv2.imwrite(pred_path, pred)
 
+    if conf_mat.sum() == 0:
+        raise RuntimeError("Confusion matrix is empty. Check predictions and labels.")
+
     # Calculate metrics
-    glob_acc, mean_acc, miou = getScores(conf_mat)
-
-    # Calculate per-class IoU
     with np.errstate(divide='ignore', invalid='ignore'):
-        per_class_iou = np.diag(conf_mat) / (
-            conf_mat.sum(1) + conf_mat.sum(0) - np.diag(conf_mat)
-        ).astype(np.float32)
+        tp = np.diag(conf_mat)
+        fp = conf_mat.sum(axis=0) - tp
+        fn = conf_mat.sum(axis=1) - tp
+        union = tp + fp + fn
+        per_class_iou = np.where(union > 0, tp / union, 0)
 
-    # Calculate static and dynamic mIoU
-    static_classes = list(range(17))  # Classes 0-16
-    dynamic_classes = [17, 18]  # sedan, truck
+        class_total = conf_mat.sum(axis=1)
+        support = class_total.astype(np.int64)
+        valid_mask = class_total > 0
 
-    static_iou = np.nanmean(per_class_iou[static_classes]) * 100
-    dynamic_iou = np.nanmean(per_class_iou[dynamic_classes]) * 100
+        class_acc = np.where(class_total > 0, tp / class_total, 0)
+        precision = np.where(tp + fp > 0, tp / (tp + fp), 0)
+        recall = np.where(tp + fn > 0, tp / (tp + fn), 0)
+        f1 = np.where(
+            precision + recall > 0,
+            2 * precision * recall / (precision + recall),
+            0
+        )
+
+        glob_acc = tp.sum() / conf_mat.sum() * 100.0
+        mean_acc = np.nanmean(class_acc[valid_mask]) * 100.0
+        miou = np.nanmean(per_class_iou[valid_mask]) * 100.0
+        mean_precision = np.nanmean(precision[valid_mask]) * 100.0
+        mean_recall = np.nanmean(recall[valid_mask]) * 100.0
+        mean_f1 = np.nanmean(f1[valid_mask]) * 100.0
+
+        # Static and dynamic mIoU
+        static_mask = np.zeros(args.num_classes, dtype=bool)
+        static_mask[:17] = True
+        static_valid = valid_mask & static_mask
+        static_iou = np.nanmean(per_class_iou[static_valid]) * 100.0 if static_valid.any() else 0.0
+
+        dynamic_mask = np.zeros(args.num_classes, dtype=bool)
+        if args.num_classes > 17:
+            dynamic_mask[17:] = True
+        dynamic_valid = valid_mask & dynamic_mask
+        dynamic_iou = np.nanmean(per_class_iou[dynamic_valid]) * 100.0 if dynamic_valid.any() else 0.0
 
     # Inference speed
-    avg_time_ms = (total_time / num_images) * 1000
-    fps = num_images / total_time
+    avg_time_ms = (total_time / max(num_images, 1)) * 1000.0
+    fps = (num_images / total_time) if total_time > 0 else 0.0
 
     # GPU info
     gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
 
     # Print results
-    print("\n" + "="*60)
-    print("EVALUATION RESULTS")
-    print("="*60)
-    print(f"Global Accuracy: {glob_acc:.2f}%")
-    print(f"Mean Accuracy:   {mean_acc:.2f}%")
-    print(f"mIoU (All):      {miou:.2f}%")
-    print(f"mIoU (Static):   {static_iou:.2f}%")
-    print(f"mIoU (Dynamic):  {dynamic_iou:.2f}%")
-    print("="*60)
-
-    # Per-class IoU
-    print("\nPer-class IoU:")
-    print("-"*40)
-    for i, (name, iou) in enumerate(zip(CLASS_NAMES, per_class_iou)):
+    print(f"\nmIoU: {miou:.2f}% | Static: {static_iou:.2f}% | Dynamic: {dynamic_iou:.2f}% | Acc: {glob_acc:.2f}%")
+    print("\n" + "=" * 100)
+    print(f"{'Class':<20} {'IoU':>8} {'Prec':>8} {'Recall':>8} {'F1':>8} {'Acc':>8} {'Support':>12}")
+    print("-" * 100)
+    for i, name in enumerate(CLASS_NAMES):
+        if support[i] <= 0:
+            continue
         cls_type = "[D]" if i >= 17 else "[S]"
-        print(f"  {cls_type} {i:2d}. {name:20s}: {iou*100:5.2f}%")
-    print("-"*40)
+        print(
+            f"  {cls_type} {name:<15} "
+            f"{per_class_iou[i] * 100:>7.2f}% "
+            f"{precision[i] * 100:>7.2f}% "
+            f"{recall[i] * 100:>7.2f}% "
+            f"{f1[i] * 100:>7.2f}% "
+            f"{class_acc[i] * 100:>7.2f}% "
+            f"{support[i]:>11,}"
+        )
+    print("-" * 100)
+    print(f"  {'mIoU':<18} {miou:>7.2f}%")
+    print(f"  {'Static mIoU':<18} {static_iou:>7.2f}%")
+    print(f"  {'Dynamic mIoU':<18} {dynamic_iou:>7.2f}%")
+    print(f"  {'Pixel Accuracy':<18} {glob_acc:>7.2f}%")
+    print(f"  {'Mean Accuracy':<18} {mean_acc:>7.2f}%")
+    print(f"  {'Mean Precision':<18} {mean_precision:>7.2f}%")
+    print(f"  {'Mean Recall':<18} {mean_recall:>7.2f}%")
+    print(f"  {'Mean F1':<18} {mean_f1:>7.2f}%")
+    print("=" * 100)
+
+    # Top confused class pairs
+    top_confusions = []
+    cm_copy = conf_mat.copy()
+    np.fill_diagonal(cm_copy, 0)
+    flat_indices = np.argsort(cm_copy.ravel())[::-1][:5]
+    print("\nMost Confused Class Pairs (Top 5):")
+    print("-" * 100)
+    for flat_idx in flat_indices:
+        true_cls = flat_idx // args.num_classes
+        pred_cls = flat_idx % args.num_classes
+        count = int(cm_copy[true_cls, pred_cls])
+        if count <= 0:
+            continue
+        print(f"  {CLASS_NAMES[true_cls]:<18} -> {CLASS_NAMES[pred_cls]:<18}: {count:>12,} pixels")
+        top_confusions.append({
+            "true_class": CLASS_NAMES[true_cls],
+            "pred_class": CLASS_NAMES[pred_cls],
+            "count": count,
+        })
+    print("=" * 100)
 
     # Inference speed
     print(f"\nInference Speed ({gpu_name}):")
@@ -376,16 +434,32 @@ def evaluate(args):
             "dynamic_mIoU": round(float(dynamic_iou), 2),
             "global_accuracy": round(float(glob_acc), 2),
             "mean_accuracy": round(float(mean_acc), 2),
+            "mean_precision": round(float(mean_precision), 2),
+            "mean_recall": round(float(mean_recall), 2),
+            "mean_f1": round(float(mean_f1), 2),
         },
         "inference": {
             "gpu": gpu_name,
             "avg_time_per_image_ms": round(avg_time_ms, 1),
             "fps": round(fps, 2),
         },
+        "per_class": {
+            name: {
+                "iou": round(float(per_class_iou[i] * 100), 2),
+                "precision": round(float(precision[i] * 100), 2),
+                "recall": round(float(recall[i] * 100), 2),
+                "f1": round(float(f1[i] * 100), 2),
+                "accuracy": round(float(class_acc[i] * 100), 2),
+                "support": int(support[i]),
+                "type": "dynamic" if i >= 17 else "static",
+            }
+            for i, name in enumerate(CLASS_NAMES)
+        },
         "per_class_iou": {
             name: round(float(iou * 100), 2)
             for name, iou in zip(CLASS_NAMES, per_class_iou)
         },
+        "top_confusions": top_confusions,
     }
 
     json_path = os.path.join(results_dir, "GeminiFusion_test_results.json")
@@ -395,34 +469,60 @@ def evaluate(args):
     # Save results to TXT
     txt_path = os.path.join(results_dir, "GeminiFusion_test_results.txt")
     with open(txt_path, "w") as f:
-        f.write("=" * 60 + "\n")
+        f.write("=" * 100 + "\n")
         f.write(f"GeminiFusion Test Evaluation Results\n")
         f.write(f"Timestamp: {timestamp}\n")
         f.write(f"Checkpoint: {args.resume}\n")
         f.write(f"GPU: {gpu_name}\n")
-        f.write("=" * 60 + "\n\n")
+        f.write("=" * 100 + "\n\n")
 
         f.write("SUMMARY\n")
-        f.write("-" * 40 + "\n")
+        f.write("-" * 100 + "\n")
         f.write(f"mIoU (All):      {miou:.2f}%\n")
         f.write(f"mIoU (Static):   {static_iou:.2f}%  (17 classes)\n")
         f.write(f"mIoU (Dynamic):  {dynamic_iou:.2f}%  (2 classes)\n")
         f.write(f"Global Accuracy: {glob_acc:.2f}%\n")
-        f.write(f"Mean Accuracy:   {mean_acc:.2f}%\n\n")
+        f.write(f"Mean Accuracy:   {mean_acc:.2f}%\n")
+        f.write(f"Mean Precision:  {mean_precision:.2f}%\n")
+        f.write(f"Mean Recall:     {mean_recall:.2f}%\n")
+        f.write(f"Mean F1:         {mean_f1:.2f}%\n\n")
 
         f.write("INFERENCE SPEED\n")
-        f.write("-" * 40 + "\n")
+        f.write("-" * 100 + "\n")
         f.write(f"Avg time/image:  {avg_time_ms:.1f} ms\n")
         f.write(f"FPS:             {fps:.2f}\n")
         f.write(f"Total images:    {num_images}\n")
         f.write(f"Window/Stride:   {args.window_size}/{args.stride}\n\n")
 
-        f.write("PER-CLASS IoU\n")
-        f.write("-" * 40 + "\n")
-        for i, (name, iou) in enumerate(zip(CLASS_NAMES, per_class_iou)):
+        f.write("PER-CLASS RESULTS\n")
+        f.write("=" * 100 + "\n")
+        f.write(f"{'Class':<20} {'IoU':>8} {'Prec':>8} {'Recall':>8} {'F1':>8} {'Acc':>8} {'Support':>12}\n")
+        f.write("-" * 100 + "\n")
+        for i, name in enumerate(CLASS_NAMES):
+            if support[i] <= 0:
+                continue
             cls_type = "[D]" if i >= 17 else "[S]"
-            f.write(f"  {cls_type} {i:2d}. {name:20s}: {iou*100:5.2f}%\n")
-        f.write("-" * 40 + "\n")
+            f.write(
+                f"  {cls_type} {name:<15} "
+                f"{per_class_iou[i] * 100:>7.2f}% "
+                f"{precision[i] * 100:>7.2f}% "
+                f"{recall[i] * 100:>7.2f}% "
+                f"{f1[i] * 100:>7.2f}% "
+                f"{class_acc[i] * 100:>7.2f}% "
+                f"{support[i]:>11,}\n"
+            )
+        f.write("=" * 100 + "\n")
+        f.write("\nMOST CONFUSED CLASS PAIRS (TOP 5)\n")
+        f.write("-" * 100 + "\n")
+        if top_confusions:
+            for item in top_confusions:
+                f.write(
+                    f"  {item['true_class']:<18} -> {item['pred_class']:<18}: "
+                    f"{item['count']:>12,} pixels\n"
+                )
+        else:
+            f.write("  No class confusion detected.\n")
+        f.write("=" * 100 + "\n")
 
     print(f"\nResults saved to:")
     print(f"  JSON: {json_path}")

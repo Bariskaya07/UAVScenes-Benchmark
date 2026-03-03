@@ -938,16 +938,32 @@ def validate(
 
             num_images += gt_batch.shape[0]
 
-        latency = all_times / max(1, num_images)
-        if should_print_header:
-            print(f"all_times: {all_times}  num_images: {num_images}  latency: {latency}")
-
     # Aggregate confusion matrices across ranks for correct multi-GPU evaluation.
     if dist.is_initialized() and dist.get_world_size() > 1:
         for idx in range(len(conf_mat)):
             t = torch.as_tensor(conf_mat[idx], dtype=torch.int64, device="cuda")
             dist.all_reduce(t, op=dist.ReduceOp.SUM)
             conf_mat[idx] = t.cpu().numpy()
+
+    total_time_global = float(all_times)
+    total_images_global = int(num_images)
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        t_speed = torch.tensor(
+            [float(all_times), float(num_images)],
+            dtype=torch.float64,
+            device="cuda",
+        )
+        dist.all_reduce(t_speed, op=dist.ReduceOp.SUM)
+        total_time_global = float(t_speed[0].item())
+        total_images_global = int(round(float(t_speed[1].item())))
+
+    latency = total_time_global / max(1, total_images_global)
+    fps = 1.0 / latency if latency > 0 else 0.0
+    if should_print_header:
+        print(
+            f"all_times: {total_time_global:.3f}  num_images: {total_images_global}  "
+            f"latency: {latency:.6f}s"
+        )
 
     # UAVScenes class names
     uavscenes_classes = [
@@ -975,15 +991,98 @@ def validate(
             )
 
             if input_type == "ens":
-                per_class_iou = getPerClassIoU(conf_mat[idx])
-                print_log("\nPer-class IoU:")
-                for class_idx, cls_name in enumerate(uavscenes_classes):
-                    marker = "[D]" if class_idx >= 17 else "[S]"
-                    val = float(per_class_iou[class_idx])
-                    val_str = "N/A" if np.isnan(val) else f"{val:>6.2f}%"
-                    print_log(
-                        f"  {marker} {cls_name:<18} {val_str}"
+                cm = conf_mat[idx]
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    tp = np.diag(cm)
+                    fp = cm.sum(axis=0) - tp
+                    fn = cm.sum(axis=1) - tp
+                    union = tp + fp + fn
+                    class_iou = np.where(union > 0, tp / union, 0)
+
+                    class_total = cm.sum(axis=1)
+                    support = class_total.astype(np.int64)
+                    valid_mask = class_total > 0
+                    class_acc = np.where(class_total > 0, tp / class_total, 0)
+
+                    precision = np.where(tp + fp > 0, tp / (tp + fp), 0)
+                    recall = np.where(tp + fn > 0, tp / (tp + fn), 0)
+                    f1 = np.where(
+                        precision + recall > 0,
+                        2 * precision * recall / (precision + recall),
+                        0,
                     )
+
+                    mean_precision = np.nanmean(precision[valid_mask]) * 100.0
+                    mean_recall = np.nanmean(recall[valid_mask]) * 100.0
+                    mean_f1 = np.nanmean(f1[valid_mask]) * 100.0
+
+                    static_mask = np.zeros(num_classes, dtype=bool)
+                    static_mask[:17] = True
+                    static_valid = valid_mask & static_mask
+                    static_miou = np.nanmean(class_iou[static_valid]) * 100.0 if static_valid.any() else 0.0
+
+                    dynamic_mask = np.zeros(num_classes, dtype=bool)
+                    if num_classes > 17:
+                        dynamic_mask[17:] = True
+                    dynamic_valid = valid_mask & dynamic_mask
+                    dynamic_miou = np.nanmean(class_iou[dynamic_valid]) * 100.0 if dynamic_valid.any() else 0.0
+
+                print_log(
+                    f"\nmIoU: {miou:.2f}% | Static: {static_miou:.2f}% | "
+                    f"Dynamic: {dynamic_miou:.2f}% | Acc: {glob:.2f}%"
+                )
+                print_log("\n" + "=" * 100)
+                print_log(
+                    f"{'Class':<20} {'IoU':>8} {'Prec':>8} {'Recall':>8} "
+                    f"{'F1':>8} {'Acc':>8} {'Support':>12}"
+                )
+                print_log("-" * 100)
+                for class_idx, cls_name in enumerate(uavscenes_classes):
+                    if support[class_idx] <= 0:
+                        continue
+                    cls_type = "[D]" if class_idx >= 17 else "[S]"
+                    print_log(
+                        f"  {cls_type} {cls_name:<15} "
+                        f"{class_iou[class_idx] * 100:>7.2f}% "
+                        f"{precision[class_idx] * 100:>7.2f}% "
+                        f"{recall[class_idx] * 100:>7.2f}% "
+                        f"{f1[class_idx] * 100:>7.2f}% "
+                        f"{class_acc[class_idx] * 100:>7.2f}% "
+                        f"{support[class_idx]:>11,}"
+                    )
+                print_log("-" * 100)
+                print_log(f"  {'mIoU':<18} {miou:>7.2f}%")
+                print_log(f"  {'Static mIoU':<18} {static_miou:>7.2f}%")
+                print_log(f"  {'Dynamic mIoU':<18} {dynamic_miou:>7.2f}%")
+                print_log(f"  {'Pixel Accuracy':<18} {glob:>7.2f}%")
+                print_log(f"  {'Mean Accuracy':<18} {mean:>7.2f}%")
+                print_log(f"  {'Mean Precision':<18} {mean_precision:>7.2f}%")
+                print_log(f"  {'Mean Recall':<18} {mean_recall:>7.2f}%")
+                print_log(f"  {'Mean F1':<18} {mean_f1:>7.2f}%")
+                print_log("=" * 100)
+                print_log("\nMost Confused Class Pairs (Top 5):")
+                print_log("-" * 100)
+                cm_copy = cm.copy()
+                np.fill_diagonal(cm_copy, 0)
+                flat_indices = np.argsort(cm_copy.ravel())[::-1][:5]
+                has_confusion = False
+                for flat_idx in flat_indices:
+                    true_cls = flat_idx // num_classes
+                    pred_cls = flat_idx % num_classes
+                    count = int(cm_copy[true_cls, pred_cls])
+                    if count <= 0:
+                        continue
+                    has_confusion = True
+                    print_log(
+                        f"  {uavscenes_classes[true_cls]:<18} -> "
+                        f"{uavscenes_classes[pred_cls]:<18}: {count:>12,} pixels"
+                    )
+                if not has_confusion:
+                    print_log("  No class confusion detected.")
+                print_log("=" * 100)
+                print_log("\nInference speed:")
+                print_log(f"  Average time per image: {latency * 1000:.1f}ms")
+                print_log(f"  FPS: {fps:.2f}")
 
         print_log("")
 
