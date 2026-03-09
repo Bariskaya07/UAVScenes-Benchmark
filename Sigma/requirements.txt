@@ -1,12 +1,12 @@
 # Sigma (Siamese Mamba) UAVScenes Requirements
-# VM: CUDA 12.4, Python 3.10
+# VM: CUDA 11.8, Python 3.10, A100 GPU
 
-# PyTorch (CUDA 12.4)
---extra-index-url https://download.pytorch.org/whl/cu124
-torch>=2.4.0
-torchvision>=0.19.0
+# PyTorch (CUDA 11.8)
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch>=2.0.0
+torchvision>=0.15.0
 
-# Mamba dependencies (CUDA 12.x)
+# Mamba dependencies (CUDA 11.8+)
 causal-conv1d>=1.1.0
 mamba-ssm>=1.1.0
 
