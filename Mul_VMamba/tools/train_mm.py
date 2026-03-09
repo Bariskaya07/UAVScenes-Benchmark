@@ -43,14 +43,15 @@ def main(cfg, gpu, save_dir):
     valtransform = get_val_augmentation(eval_cfg['IMAGE_SIZE'])
 
     dataset_extra_kwargs = {}
+    dataset_root = os.path.expanduser(dataset_cfg['ROOT'])
     if dataset_cfg['NAME'] == 'UAVScenes':
         dataset_extra_kwargs = {
             'hag_max_meters': dataset_cfg.get('HAG_MAX_METERS', 50.0),
             'aux_channels': dataset_cfg.get('AUX_CHANNELS', 3),
         }
 
-    trainset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'train', traintransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
-    valset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'val', valtransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
+    trainset = eval(dataset_cfg['NAME'])(dataset_root, 'train', traintransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
+    valset = eval(dataset_cfg['NAME'])(dataset_root, 'val', valtransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
     class_names = trainset.CLASSES
 
     model = eval(model_cfg['NAME'])(model_cfg['BACKBONE'], trainset.n_classes, dataset_cfg['MODALS'])
@@ -218,7 +219,7 @@ def main(cfg, gpu, save_dir):
             logger.info(f"Loaded best checkpoint: {best_ckpt}")
 
         # Create test dataloader
-        testset = eval(dataset_cfg['NAME'])(dataset_cfg['ROOT'], 'test', valtransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
+        testset = eval(dataset_cfg['NAME'])(dataset_root, 'test', valtransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
         testloader = DataLoader(testset, batch_size=eval_cfg['BATCH_SIZE'], num_workers=num_workers, pin_memory=False)
         logger.info(f"Test set: {len(testset)} samples")
 

@@ -31,7 +31,7 @@ MODEL:
 # -------------------------------------------------------------------------
 DATASET:
   NAME          : UAVScenes                                         # Dataset name
-  ROOT          : 'data/UAVScenes'                                  # Symlink to actual data
+  ROOT          : '~/UAVScenesData'                                   # Bucket: uavscenes007/uavscenes-cmnext/UAVScenesData/UAVScenesData/
   IGNORE_LABEL  : 255                                               # Ignore index
   AUX_CHANNELS  : 3                                                 # Dataset aux channels (3=stacked for backward compat)
   HAG_MAX_METERS: 50.0                                              # Match benchmark standard
@@ -95,7 +95,7 @@ EVAL:
 # -------------------------------------------------------------------------
 TEST:
   MODEL_PATH    : 'output/UAVScenes_MulVMamba/best.pth'
-  FILE          : 'data/UAVScenes'
+  FILE          : '~/UAVScenesData'
   IMAGE_SIZE    : [768, 768]
   OVERLAY       : false
   MODE          : 'slide'         # Accurate final test
