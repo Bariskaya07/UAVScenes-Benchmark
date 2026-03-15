@@ -32,10 +32,11 @@ echo "[5/5] Installing remaining dependencies..."
 pip install timm tensorboardX easydict scipy tqdm Pillow \
     PyYAML fvcore tabulate termcolor packaging einops -q
 
-# Step 6: Build selective_scan CUDA kernel
+# Step 6: Build and install selective_scan CUDA kernel
 echo "[6/6] Building selective_scan CUDA kernel (this takes ~5 min)..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/models/encoders/selective_scan"
+pip install -e . --no-build-isolation -q
 python setup.py build_ext --inplace
 cp selective_scan_cuda_core*.so "$SCRIPT_DIR/"
 cd "$SCRIPT_DIR"
