@@ -33,15 +33,15 @@ C.abs_dir = osp.realpath(".")
 # Dataset Config
 # ==============================================================================
 C.dataset_name = 'UAVScenes'
-C.dataset_path = os.path.expanduser('~/UAVScenesData')
+C.dataset_path = os.path.expanduser('~/uavscenes007/uavscenes-cmnext/UAVScenesData/UAVScenesData')
 
 # Path structure for UAVScenes (GCS bucket: uavscenes007/uavscenes-cmnext/UAVScenesData/UAVScenesData/)
 # RGB: interval5_CAM_LIDAR/interval5_CAM_LIDAR/{scene}/interval5_CAM/{timestamp}.jpg
 # Label: interval5_CAM_label/interval5_CAM_label/{scene}/interval5_CAM_label_id/{timestamp}.png
 # HAG: interval5_HAG_CSF/{scene}/{timestamp}.png
-C.rgb_root_folder = C.dataset_path  # Dataset adds interval5_CAM_LIDAR internally
+C.rgb_root_folder = C.dataset_path  # Dataset adds interval5_CAM_LIDAR/{scene}/interval5_CAM internally
 C.rgb_format = '.jpg'
-C.gt_root_folder = C.dataset_path  # Dataset adds interval5_CAM_label internally
+C.gt_root_folder = C.dataset_path  # Dataset adds interval5_CAM_label/{scene}/interval5_CAM_label_id internally
 C.gt_format = '.png'
 C.gt_transform = False  # Label remapping handled in UAVScenesDataset
 C.x_root_folder = osp.join(C.dataset_path, 'interval5_HAG_CSF')
