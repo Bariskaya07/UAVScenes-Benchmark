@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
+from torch.cuda.amp import autocast, GradScaler
 
 try:
     from fvcore.nn import FlopCountAnalysis
@@ -155,6 +156,7 @@ with Engine(custom_parser=parser) as engine:
     if engine.continue_state_object:
         engine.restore_checkpoint()
 
+    scaler = GradScaler()
     optimizer.zero_grad()
     model.train()
     apply_freeze_bn_if_needed(model)
@@ -204,15 +206,17 @@ with Engine(custom_parser=parser) as engine:
             modal_xs = modal_xs.cuda(non_blocking=True)
 
             aux_rate = 0.2
-            loss = model(imgs, modal_xs, gts)
+            with autocast():
+                loss = model(imgs, modal_xs, gts)
 
             # reduce the whole loss over multi-gpu
             if engine.distributed:
                 reduce_loss = all_reduce_tensor(loss, world_size=engine.world_size)
-            
+
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             current_idx = (epoch- 1) * config.niters_per_epoch + idx 
             lr = lr_policy.get_lr(current_idx)
