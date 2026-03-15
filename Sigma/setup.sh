@@ -37,6 +37,7 @@ echo "[6/6] Building selective_scan CUDA kernel (this takes ~5 min)..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/models/encoders/selective_scan"
 python setup.py build_ext --inplace
+cp selective_scan_cuda_core*.so "$SCRIPT_DIR/"
 cd "$SCRIPT_DIR"
 
 echo ""
