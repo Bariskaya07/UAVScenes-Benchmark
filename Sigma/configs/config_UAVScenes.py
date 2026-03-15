@@ -8,7 +8,7 @@ Key Settings:
 - Resolution: 768x768 (matching CMNeXt/DFormerV2 for fair comparison)
 - Classes: 19 (remapped from 26)
 - HAG normalization: 50m max (same as CMNeXt)
-- Backbone: sigma_small (comparable params to MiT-B2)
+- Backbone: sigma_tiny (VMamba-T, 30M params — fair comparison with MiT-B2 25.4M)
 """
 
 import os
@@ -98,8 +98,8 @@ C.hag_max_meters = 50.0  # Maximum height for normalization (same as CMNeXt)
 # ==============================================================================
 # Network Config
 # ==============================================================================
-C.backbone = 'sigma_small'  # sigma_tiny / sigma_small / sigma_base
-C.pretrained_model = None   # Handled internally by backbone
+C.backbone = 'sigma_tiny'   # VMamba-T (30M params, fair comparison with MiT-B2 25.4M)
+C.pretrained_model = None   # Pretrained loaded internally by dual_vmamba.py
 C.decoder = 'MambaDecoder'  # Sigma's Mamba-based decoder
 C.decoder_embed_dim = 512
 C.optimizer = 'AdamW'
