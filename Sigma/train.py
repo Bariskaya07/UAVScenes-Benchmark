@@ -101,8 +101,9 @@ with Engine(custom_parser=parser) as engine:
 
     if FVCORE_AVAILABLE:
         try:
-            dummy_rgb = torch.zeros(1, 3, 768, 768)
-            dummy_modal = torch.zeros(1, 3, 768, 768)
+            _device = next(model.parameters()).device
+            dummy_rgb = torch.zeros(1, 3, 768, 768).to(_device)
+            dummy_modal = torch.zeros(1, 3, 768, 768).to(_device)
             model.eval()
             flops = FlopCountAnalysis(model, (dummy_rgb, dummy_modal))
             logger.info(f"FLOPs: {flops.total() / 1e9:.2f}G")

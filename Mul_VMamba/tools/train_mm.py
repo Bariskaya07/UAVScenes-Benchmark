@@ -62,7 +62,7 @@ def main(cfg, gpu, save_dir):
         # print(msg)
         logger.info(msg)
     else:
-        model.init_pretrained(model_cfg['PRETRAINED'])
+        model.init_pretrained(os.path.expanduser(model_cfg['PRETRAINED']))
     model = model.to(device)
     
     iters_per_epoch = len(trainset) // train_cfg['BATCH_SIZE'] // gpus
