@@ -317,6 +317,14 @@ with Engine(custom_parser=parser) as engine:
                 model.train()
                 apply_freeze_bn_if_needed(model)
 
+    # Save last epoch checkpoint
+    last_ckpt = os.path.join(config.checkpoint_dir, 'epoch-last.pth')
+    if engine.distributed and engine.local_rank == 0:
+        torch.save(model.module.state_dict(), last_ckpt)
+    elif not engine.distributed:
+        torch.save(model.state_dict(), last_ckpt)
+    logger.info(f"Saved last epoch checkpoint: {last_ckpt}")
+
     # Final evaluation on test set with slide mode
     logger.info("\n" + "=" * 60)
     logger.info("Final evaluation on TEST set with SLIDE mode")

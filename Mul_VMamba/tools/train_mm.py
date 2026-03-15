@@ -189,6 +189,10 @@ def main(cfg, gpu, save_dir):
                 logger.info(f"Current epoch:{epoch} mIoU: {miou} Best mIoU: {best_mIoU}")
 
     if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
+        # Save last epoch checkpoint
+        last_ckpt = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch_last.pth"
+        torch.save(model.module.state_dict() if train_cfg['DDP'] else model.state_dict(), last_ckpt)
+        logger.info(f"Saved last epoch checkpoint: {last_ckpt}")
         writer.close()
     pbar.close()
     end = time.gmtime(time.time() - start)
