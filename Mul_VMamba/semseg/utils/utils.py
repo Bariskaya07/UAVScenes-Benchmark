@@ -145,15 +145,13 @@ def get_logger(log_file=None):
 
 
 def cal_flops(model, modals, logger):
-    x = [torch.zeros(1, 3, 512, 512) for _ in range(len(modals))]
-    # x = [torch.zeros(2, 3, 512, 512) for _ in range(len(modals))] #--- PGSNet
-    # x = [torch.zeros(1, 3, 512, 512) for _ in range(len(modals))] # --- for HRFuser
+    x = [torch.zeros(1, 3, 768, 768) for _ in range(len(modals))]
     if torch.distributed.is_initialized():
         if 'HR' in model.module.__class__.__name__:
-            x = [torch.zeros(1, 3, 512, 512) for _ in range(len(modals))] # --- for HorNet
+            x = [torch.zeros(1, 3, 768, 768) for _ in range(len(modals))]
     else:
         if 'HR' in model.__class__.__name__:
-            x = [torch.zeros(1, 3, 512, 512) for _ in range(len(modals))] # --- for HorNet
+            x = [torch.zeros(1, 3, 768, 768) for _ in range(len(modals))]
 
     if torch.cuda.is_available:
         x = [xi.cuda() for xi in x]
