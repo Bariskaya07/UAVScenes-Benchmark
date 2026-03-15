@@ -114,9 +114,9 @@ C.lr_power = 0.9      # PolyLR power (CMNeXt paper setting)
 C.momentum = 0.9
 C.weight_decay = 0.01
 C.warmup_ratio = 0.1  # Initial LR = LR * warmup_ratio (CMNeXt paper setting)
-C.batch_size = 4      # Per-GPU batch size (global = 4 x num_gpus, target global=8 with 2 GPUs)
+C.batch_size = 8      # Global batch size (engine divides by num_gpus for per-GPU batch)
 C.nepochs = 60        # Training epochs
-C.niters_per_epoch = C.num_train_imgs // C.batch_size + 1  # Overridden in train.py from actual dataloader
+C.niters_per_epoch = C.num_train_imgs // C.batch_size + 1
 C.num_workers = 8
 
 # Augmentation (Standardized with CMNeXt for fair comparison)

@@ -77,8 +77,6 @@ with Engine(custom_parser=parser) as engine:
     else:
         DatasetClass = RGBXDataset
     train_loader, train_sampler = get_train_loader(engine, DatasetClass, config)
-    config.niters_per_epoch = len(train_loader)  # Actual iters per GPU (accounts for DDP split)
-    logger.info(f"niters_per_epoch: {config.niters_per_epoch} (batch_size={config.batch_size}, GPUs={engine.world_size if engine.distributed else 1})")
 
     if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
         tb_dir = config.tb_dir + '/{}'.format(time.strftime("%b%d_%d-%H-%M", time.localtime()))
