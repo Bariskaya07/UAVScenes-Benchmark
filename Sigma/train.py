@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import argparse
+import numpy as np
 from tqdm import tqdm
 
 import torch
@@ -151,6 +152,42 @@ with Engine(custom_parser=parser) as engine:
             if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
                 m.eval()
 
+    def validate_batched(model, val_dataset, config, device, val_log_file, batch_size=8):
+        """Batched whole-image validation (~8x faster than single-sample evaluation)."""
+        n = val_dataset.get_length()
+        hist = np.zeros((config.num_classes, config.num_classes))
+        correct = 0
+        labeled = 0
+        mean = config.norm_mean.reshape(1, 1, 3).astype(np.float32)
+        std = config.norm_std.reshape(1, 1, 3).astype(np.float32)
+
+        for batch_start in tqdm(range(0, n, batch_size), desc='Val'):
+            batch_end = min(batch_start + batch_size, n)
+            batch_rgb, batch_modal, batch_labels = [], [], []
+
+            for idx in range(batch_start, batch_end):
+                dd = val_dataset[idx]
+                img   = dd['data'].astype(np.float32) / 255.0       # (H, W, 3)
+                modal = dd['modal_x'].astype(np.float32) / 255.0    # (H, W, 3)
+                batch_rgb.append(((img   - mean) / std).transpose(2, 0, 1))
+                batch_modal.append(((modal - mean) / std).transpose(2, 0, 1))
+                batch_labels.append(dd['label'])
+
+            rgb_t   = torch.from_numpy(np.stack(batch_rgb)).float().cuda(device)
+            modal_t = torch.from_numpy(np.stack(batch_modal)).float().cuda(device)
+            preds = model(rgb_t, modal_t).argmax(dim=1).cpu().numpy()  # (B, H, W)
+
+            for pred, label in zip(preds, batch_labels):
+                h, l, c = hist_info(config.num_classes, pred, label)
+                hist += h; correct += c; labeled += l
+
+        iou, mean_IoU, _, freq_IoU, mean_pixel_acc, pixel_acc = compute_score(hist, correct, labeled)
+        result_line = print_iou(iou, freq_IoU, mean_pixel_acc, pixel_acc,
+                                val_dataset.class_names, show_no_back=False)
+        with open(val_log_file, 'a') as f:
+            f.write(result_line + '\n')
+        return result_line, mean_IoU
+
     engine.register_state(dataloader=train_loader, model=model,
                           optimizer=optimizer)
     if engine.continue_state_object:
@@ -262,18 +299,10 @@ with Engine(custom_parser=parser) as engine:
                 # only test on rank 0, otherwise there would be some synchronization problems
                 # evaluation to decide whether to save the model
                 if (epoch >= config.checkpoint_start_epoch) and (epoch - config.checkpoint_start_epoch) % config.checkpoint_step == 0:
-                    model.eval() 
+                    model.eval()
                     with torch.no_grad():
-                        all_dev = parse_devices(args.devices)
-                        # network = segmodel(cfg=config, criterion=None, norm_layer=nn.BatchNorm2d).cuda(all_dev[0])
-                        segmentor = SegEvaluator(dataset=val_dataset, class_num=config.num_classes,
-                                                norm_mean=config.norm_mean, norm_std=config.norm_std,
-                                                network=model, multi_scales=config.eval_scale_array,
-                                                is_flip=config.eval_flip, devices=[engine.local_rank],
-                                                verbose=False, config=config,
-                                                )
-                        _, mean_IoU = segmentor.run(config.checkpoint_dir, str(epoch), config.val_log_file,
-                                    config.link_val_log_file)
+                        _, mean_IoU = validate_batched(model, val_dataset, config,
+                                                       engine.local_rank, config.val_log_file)
                         print('mean_IoU:', mean_IoU)
                         
                         # Determine if the model performance improved
@@ -294,17 +323,10 @@ with Engine(custom_parser=parser) as engine:
                     apply_freeze_bn_if_needed(model)
         else:
             if (epoch >= config.checkpoint_start_epoch) and (epoch - config.checkpoint_start_epoch) % config.checkpoint_step == 0:
-                model.eval() 
+                model.eval()
                 with torch.no_grad():
-                    devices_val = [engine.local_rank] if engine.distributed else [0]
-                    segmentor = SegEvaluator(dataset=val_dataset, class_num=config.num_classes,
-                                            norm_mean=config.norm_mean, norm_std=config.norm_std,
-                                            network=model, multi_scales=config.eval_scale_array,
-                                            is_flip=config.eval_flip, devices=devices_val,
-                                            verbose=False, config=config,
-                                            )
-                    _, mean_IoU = segmentor.run(config.checkpoint_dir, str(epoch), config.val_log_file,
-                                config.link_val_log_file)
+                    _, mean_IoU = validate_batched(model, val_dataset, config,
+                                                   0, config.val_log_file)
                     print('mean_IoU:', mean_IoU)
                     
                     # Determine if the model performance improved
