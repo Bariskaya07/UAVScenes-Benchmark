@@ -96,24 +96,10 @@ with Engine(custom_parser=parser) as engine:
     
     model=segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
 
-    # Count parameters and FLOPs
+    # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Parameters: {total_params/1e6:.2f}M total, {trainable_params/1e6:.2f}M trainable")
-
-    if FVCORE_AVAILABLE:
-        try:
-            _device = next(model.parameters()).device
-            dummy_rgb = torch.zeros(1, 3, 768, 768).to(_device)
-            dummy_modal = torch.zeros(1, 3, 768, 768).to(_device)
-            model.eval()
-            flops = FlopCountAnalysis(model, (dummy_rgb, dummy_modal))
-            logger.info(f"FLOPs: {flops.total() / 1e9:.2f}G")
-            model.train()
-        except Exception as e:
-            logger.info(f"Could not calculate FLOPs: {e}")
-    else:
-        logger.info("FLOPs: fvcore not installed (pip install fvcore)")
 
     # group weight and config optimizer
     base_lr = config.lr
@@ -143,6 +129,21 @@ with Engine(custom_parser=parser) as engine:
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
+
+    # Calculate FLOPs after model is on CUDA
+    if FVCORE_AVAILABLE:
+        try:
+            _device = next(model.parameters()).device
+            dummy_rgb = torch.zeros(1, 3, 768, 768).to(_device)
+            dummy_modal = torch.zeros(1, 3, 768, 768).to(_device)
+            model.eval()
+            flops = FlopCountAnalysis(model, (dummy_rgb, dummy_modal))
+            logger.info(f"FLOPs: {flops.total() / 1e9:.2f}G")
+            model.train()
+        except Exception as e:
+            logger.info(f"Could not calculate FLOPs: {e}")
+    else:
+        logger.info("FLOPs: fvcore not installed (pip install fvcore)")
 
     def apply_freeze_bn_if_needed(net):
         if not getattr(config, 'freeze_bn', False):
