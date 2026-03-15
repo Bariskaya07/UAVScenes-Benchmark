@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -115,7 +116,7 @@ class vssm_tiny(RGBXTransformer):
         super(vssm_tiny, self).__init__(
             depths=[2, 2, 9, 2], 
             dims=96,
-            pretrained='checkpoints/pretrained/vssm1_tiny_0230s_ckpt_epoch_264.pth',
+            pretrained=os.path.join(os.path.dirname(__file__), '..', '..', '..', 'checkpoints', 'pretrained', 'vssm1_tiny_0230s_ckpt_epoch_264.pth'),
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.2,
