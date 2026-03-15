@@ -34,9 +34,10 @@ pip install timm tensorboardX easydict scipy tqdm Pillow \
 
 # Step 6: Build selective_scan CUDA kernel
 echo "[6/6] Building selective_scan CUDA kernel (this takes ~5 min)..."
-cd "$(dirname "$0")/models/encoders/selective_scan"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/models/encoders/selective_scan"
 python setup.py build_ext --inplace
-cd -
+cd "$SCRIPT_DIR"
 
 echo ""
 echo "========================================="
