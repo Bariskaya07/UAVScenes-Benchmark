@@ -282,15 +282,22 @@ with Engine(custom_parser=parser) as engine:
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
 
+        # Save resume checkpoint every epoch (single overwritten file, safe for spot VMs)
+        if (engine.distributed and engine.local_rank == 0) or not engine.distributed:
+            ensure_dir(config.checkpoint_dir)
+            if not osp.exists(config.log_dir_link):
+                link_file(config.log_dir, config.log_dir_link)
+            last_ckpt = osp.join(config.checkpoint_dir, 'epoch-last.pth')
+            if osp.islink(last_ckpt):
+                os.remove(last_ckpt)
+            engine.save_checkpoint(last_ckpt)
+
+        # Save named checkpoint for best-model tracking (every checkpoint_step epochs)
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if engine.distributed and (engine.local_rank == 0):
-                engine.save_and_link_checkpoint(config.checkpoint_dir,
-                                                config.log_dir,
-                                                config.log_dir_link)
+                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
             elif not engine.distributed:
-                engine.save_and_link_checkpoint(config.checkpoint_dir,
-                                                config.log_dir,
-                                                config.log_dir_link)
+                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
         
         # devices_val = [engine.local_rank] if engine.distributed else [0]
         torch.cuda.empty_cache()
