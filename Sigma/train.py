@@ -243,8 +243,13 @@ with Engine(custom_parser=parser) as engine:
             modal_xs = modal_xs.cuda(non_blocking=True)
 
             aux_rate = 0.2
-            with autocast():
+            with autocast(dtype=torch.bfloat16):
                 loss = model(imgs, modal_xs, gts)
+
+            # skip NaN/Inf loss batches (corrupted samples or overflow)
+            if not torch.isfinite(loss):
+                optimizer.zero_grad()
+                continue
 
             # reduce the whole loss over multi-gpu
             if engine.distributed:
