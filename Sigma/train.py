@@ -295,10 +295,10 @@ with Engine(custom_parser=parser) as engine:
         # Save named checkpoint for best-model tracking (every checkpoint_step epochs)
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if engine.distributed and (engine.local_rank == 0):
-                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
+                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth'))
             elif not engine.distributed:
-                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
-        
+                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth'))
+
         # devices_val = [engine.local_rank] if engine.distributed else [0]
         torch.cuda.empty_cache()
         if engine.distributed:
@@ -311,21 +311,19 @@ with Engine(custom_parser=parser) as engine:
                         _, mean_IoU = validate_batched(model, val_dataset, config,
                                                        engine.local_rank, config.val_log_file)
                         print('mean_IoU:', mean_IoU)
-                        
+
                         # Determine if the model performance improved
                         if mean_IoU > best_mean_iou:
-                            # If the model improves, remove the saved checkpoint for this epoch
-                            checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{best_epoch}.pth')
+                            checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{best_epoch}-best.pth')
                             if os.path.exists(checkpoint_path):
                                 os.remove(checkpoint_path)
                             best_epoch = epoch
                             best_mean_iou = mean_IoU
                         else:
-                            # If the model does not improve, remove the saved checkpoint for this epoch
-                            checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
+                            checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth')
                             if os.path.exists(checkpoint_path):
                                 os.remove(checkpoint_path)
-                        
+
                     model.train()
                     apply_freeze_bn_if_needed(model)
         else:
@@ -335,18 +333,16 @@ with Engine(custom_parser=parser) as engine:
                     _, mean_IoU = validate_batched(model, val_dataset, config,
                                                    0, config.val_log_file)
                     print('mean_IoU:', mean_IoU)
-                    
+
                     # Determine if the model performance improved
                     if mean_IoU > best_mean_iou:
-                        # If the model improves, remove the saved checkpoint for this epoch
-                        checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{best_epoch}.pth')
+                        checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{best_epoch}-best.pth')
                         if os.path.exists(checkpoint_path):
                             os.remove(checkpoint_path)
                         best_epoch = epoch
                         best_mean_iou = mean_IoU
                     else:
-                        # If the model does not improve, remove the saved checkpoint for this epoch
-                        checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
+                        checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth')
                         if os.path.exists(checkpoint_path):
                             os.remove(checkpoint_path)
                 model.train()
