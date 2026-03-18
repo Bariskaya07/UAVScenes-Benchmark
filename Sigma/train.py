@@ -193,7 +193,7 @@ with Engine(custom_parser=parser) as engine:
     if engine.continue_state_object:
         engine.restore_checkpoint()
 
-    scaler = GradScaler()
+    scaler = GradScaler(init_scale=256)
     optimizer.zero_grad()
     model.train()
     apply_freeze_bn_if_needed(model)
@@ -243,7 +243,7 @@ with Engine(custom_parser=parser) as engine:
             modal_xs = modal_xs.cuda(non_blocking=True)
 
             aux_rate = 0.2
-            with autocast(dtype=torch.bfloat16):
+            with autocast():
                 loss = model(imgs, modal_xs, gts)
 
             # skip NaN/Inf loss batches (corrupted samples or overflow)
