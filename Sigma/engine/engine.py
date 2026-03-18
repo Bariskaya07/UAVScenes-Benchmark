@@ -144,7 +144,16 @@ class Engine(object):
         else:
             tmp = torch.load(self.continue_state_object, weights_only=False)
         t_ioend = time.time()
-        self.state.model = load_model(self.state.model, tmp['model'], is_restore=True)
+        # Add module. prefix if model is wrapped in DDP/DataParallel
+        state_dict = tmp['model']
+        if hasattr(self.state.model, 'module'):
+            from collections import OrderedDict
+            new_state_dict = OrderedDict()
+            for k, v in state_dict.items():
+                key = 'module.' + k if not k.startswith('module.') else k
+                new_state_dict[key] = v
+            state_dict = new_state_dict
+        self.state.model = load_model(self.state.model, state_dict, is_restore=False)
         self.state.optimizer.load_state_dict(tmp['optimizer'])
         self.state.epoch = tmp['epoch'] + 1
         self.state.iteration = tmp['iteration']
