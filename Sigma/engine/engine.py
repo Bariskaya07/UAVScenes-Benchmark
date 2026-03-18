@@ -154,7 +154,8 @@ class Engine(object):
                 new_state_dict[key] = v
             state_dict = new_state_dict
         self.state.model = load_model(self.state.model, state_dict, is_restore=False)
-        self.state.optimizer.load_state_dict(tmp['optimizer'])
+        # Skip optimizer state to save ~386MB GPU memory (AdamW rebuilds momentum lazily)
+        # self.state.optimizer.load_state_dict(tmp['optimizer'])
         self.state.epoch = tmp['epoch'] + 1
         self.state.iteration = tmp['iteration']
         del tmp
