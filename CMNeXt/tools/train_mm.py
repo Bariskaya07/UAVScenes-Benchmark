@@ -58,8 +58,20 @@ def parse_args():
 
 def load_config(cfg_path):
     """Load YAML config file."""
+    cfg_path = Path(cfg_path).resolve()
     with open(cfg_path, 'r') as f:
         cfg = yaml.safe_load(f)
+    repo_root = cfg_path.parent.parent
+
+    def resolve_path(path_value):
+        path_obj = Path(path_value)
+        if path_obj.is_absolute():
+            return str(path_obj)
+        return str((repo_root / path_obj).resolve())
+
+    cfg['SAVE_DIR'] = resolve_path(cfg['SAVE_DIR'])
+    cfg['DATASET']['ROOT'] = resolve_path(cfg['DATASET']['ROOT'])
+    cfg['MODEL']['PRETRAINED'] = resolve_path(cfg['MODEL']['PRETRAINED'])
     return cfg
 
 

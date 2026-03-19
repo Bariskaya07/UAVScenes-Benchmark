@@ -25,6 +25,17 @@ from val_mm import evaluate
 import warnings
 warnings.filterwarnings("ignore")
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_repo_path(path_str):
+    if not path_str:
+        return Path(path_str)
+    path = Path(os.path.expanduser(path_str))
+    if path.is_absolute():
+        return path
+    return REPO_ROOT / path
+
 
 def main(cfg, gpu, save_dir):
     start = time.time()
@@ -36,14 +47,14 @@ def main(cfg, gpu, save_dir):
     dataset_cfg, model_cfg = cfg['DATASET'], cfg['MODEL']
     loss_cfg, optim_cfg, sched_cfg = cfg['LOSS'], cfg['OPTIMIZER'], cfg['SCHEDULER']
     epochs, lr = train_cfg['EPOCHS'], optim_cfg['LR']
-    resume_path = cfg['MODEL']['RESUME']
+    resume_path = str(resolve_repo_path(cfg['MODEL']['RESUME'])) if cfg['MODEL']['RESUME'] else ''
     gpus = 1
 
     traintransform = get_train_augmentation(train_cfg['IMAGE_SIZE'], seg_fill=dataset_cfg['IGNORE_LABEL'])
     valtransform = get_val_augmentation(eval_cfg['IMAGE_SIZE'])
 
     dataset_extra_kwargs = {}
-    dataset_root = os.path.expanduser(dataset_cfg['ROOT'])
+    dataset_root = str(resolve_repo_path(dataset_cfg['ROOT']))
     if dataset_cfg['NAME'] == 'UAVScenes':
         dataset_extra_kwargs = {
             'hag_max_meters': dataset_cfg.get('HAG_MAX_METERS', 50.0),
@@ -62,7 +73,7 @@ def main(cfg, gpu, save_dir):
         # print(msg)
         logger.info(msg)
     else:
-        model.init_pretrained(os.path.expanduser(model_cfg['PRETRAINED']))
+        model.init_pretrained(str(resolve_repo_path(model_cfg['PRETRAINED'])))
     model = model.to(device)
     
     iters_per_epoch = len(trainset) // train_cfg['BATCH_SIZE'] // gpus
@@ -136,14 +147,44 @@ def main(cfg, gpu, save_dir):
             sample = [x.to(device) for x in sample]
             lbl = lbl.to(device)
 
-            logits = model(sample)
-            loss = loss_fn(logits, lbl)
+            with autocast(enabled=train_cfg['AMP']):
+                logits = model(sample)
+                loss = loss_fn(logits, lbl)
+
+            if train_cfg['DDP']:
+                finite_flag = torch.tensor(1 if torch.isfinite(loss) else 0, device=lbl.device)
+                dist.all_reduce(finite_flag, op=dist.ReduceOp.MIN)
+                loss_is_finite = finite_flag.item() == 1
+            else:
+                loss_is_finite = torch.isfinite(loss).item()
+
+            if not loss_is_finite:
+                optimizer.zero_grad(set_to_none=True)
+                torch.cuda.empty_cache()
+                continue
 
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            if train_cfg['DDP']:
+                grad_finite_flag = torch.tensor(1 if torch.isfinite(grad_norm) else 0, device=lbl.device)
+                dist.all_reduce(grad_finite_flag, op=dist.ReduceOp.MIN)
+                grad_is_finite = grad_finite_flag.item() == 1
+            else:
+                grad_is_finite = torch.isfinite(grad_norm).item()
+
+            if not grad_is_finite:
+                optimizer.zero_grad(set_to_none=True)
+                scaler.update()
+                torch.cuda.empty_cache()
+                continue
+
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
-            torch.cuda.synchronize()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
 
             lr = scheduler.get_lr()
             lr = sum(lr) / len(lr)
@@ -177,6 +218,7 @@ def main(cfg, gpu, save_dir):
                     cur_best_ckp = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch{best_epoch}_{best_mIoU}_checkpoint.pth"
                     cur_best = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch{best_epoch}_{best_mIoU}.pth"
                     torch.save(model.module.state_dict() if train_cfg['DDP'] else model.state_dict(), cur_best)
+                    torch.save(model.module.state_dict() if train_cfg['DDP'] else model.state_dict(), save_dir / 'best.pth')
                     # --- 
                     torch.save({'epoch': best_epoch,
                                 'model_state_dict': model.module.state_dict() if train_cfg['DDP'] else model.state_dict(),
@@ -185,6 +227,13 @@ def main(cfg, gpu, save_dir):
                                 'scheduler_state_dict': scheduler.state_dict(),
                                 'best_miou': best_mIoU,
                                 }, cur_best_ckp)
+                    torch.save({'epoch': best_epoch,
+                                'model_state_dict': model.module.state_dict() if train_cfg['DDP'] else model.state_dict(),
+                                'optimizer_state_dict': optimizer.state_dict(),
+                                'loss': train_loss,
+                                'scheduler_state_dict': scheduler.state_dict(),
+                                'best_miou': best_mIoU,
+                                }, save_dir / 'best_checkpoint.pth')
                     logger.info(print_iou(epoch, ious, miou, acc, macc, class_names))
                 logger.info(f"Current epoch:{epoch} mIoU: {miou} Best mIoU: {best_mIoU}")
 
@@ -275,10 +324,11 @@ def main(cfg, gpu, save_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='configs/mcubes_rgbadnmulmamba.yaml', help='Configuration file to use')
+    parser.add_argument('--cfg', type=str, default='configs/uavscenes_rgbhagmulmamba.yaml', help='Configuration file to use')
     args = parser.parse_args()
 
-    with open(args.cfg) as f:
+    cfg_path = resolve_repo_path(args.cfg)
+    with open(cfg_path) as f:
         cfg = yaml.load(f, Loader=yaml.SafeLoader)
 
     fix_seeds(42)  # Fair comparison with CMNeXt
@@ -293,9 +343,10 @@ if __name__ == '__main__':
     else:
         exp_name = '_'.join([cfg['DATASET']['NAME'], model, modals])
 
-    save_dir = Path(cfg['SAVE_DIR'], exp_name)
-    if os.path.isfile(cfg['MODEL']['RESUME']):
-        save_dir =  Path(os.path.dirname(cfg['MODEL']['RESUME']))
+    save_dir = resolve_repo_path(cfg['SAVE_DIR']) / exp_name
+    resume_path = resolve_repo_path(cfg['MODEL']['RESUME']) if cfg['MODEL']['RESUME'] else None
+    if resume_path and resume_path.is_file():
+        save_dir = Path(os.path.dirname(resume_path))
     os.makedirs(save_dir, exist_ok=True)
     logger = get_logger(save_dir / 'train.log')
     main(cfg, gpu, save_dir)

@@ -17,7 +17,7 @@ logger = get_logger()
 
 class Evaluator(object):
     def __init__(self, dataset, class_num, norm_mean, norm_std, network, multi_scales, 
-                is_flip, devices, verbose=False, save_path=None, show_image=False, config=None):
+                is_flip, devices, verbose=False, save_path=None, show_image=False):
         self.eval_time = 0
         self.dataset = dataset
         self.ndata = self.dataset.get_length()
@@ -38,7 +38,6 @@ class Evaluator(object):
         if save_path is not None:
             ensure_dir(save_path)
         self.show_image = show_image
-        self.config = config
 
     def run(self, model_path, model_indice, log_file, log_file_link):
         """There are four evaluation modes:
@@ -85,74 +84,11 @@ class Evaluator(object):
 
         for model in models:
             logger.info("Load Model: %s" % model)
-            self.val_func = self.network # load_model(self.network, model)
-            if len(self.devices ) == 1:
-                result_line, mean_IoU = self.single_process_evalutation()
-            else:
-                result_line, mean_IoU = self.multi_process_evaluation()
-
-            results.write('Model: ' + model + '\n')
-            results.write(result_line)
-            results.write('\n')
-            results.flush()
-
-        results.close()
-        # return the overall mean_iou
-        return result_line, mean_IoU
-    
-    def run_eval(self, model_path, model_indice, log_file, log_file_link):
-        """There are four evaluation modes:
-            1.only eval a .pth model: -e *.pth
-            2.only eval a certain epoch: -e epoch
-            3.eval all epochs in a given section: -e start_epoch-end_epoch
-            4.eval all epochs from a certain started epoch: -e start_epoch-
-            """
-        if '.pth' in model_indice:
-            models = [model_indice, ]
-        elif "-" in model_indice:
-            start_epoch = int(model_indice.split("-")[0])
-            end_epoch = model_indice.split("-")[1]
-
-            models = os.listdir(model_path)
-            models.remove("epoch-last.pth")
-            sorted_models = [None] * len(models)
-            model_idx = [0] * len(models)
-
-            for idx, m in enumerate(models):
-                num = m.split(".")[0].split("-")[1]
-                model_idx[idx] = num
-                sorted_models[idx] = m
-            model_idx = np.array([int(i) for i in model_idx])
-
-            down_bound = model_idx >= start_epoch
-            up_bound = [True] * len(sorted_models)
-            if end_epoch:
-                end_epoch = int(end_epoch)
-                assert start_epoch < end_epoch
-                up_bound = model_idx <= end_epoch
-            bound = up_bound * down_bound
-            model_slice = np.array(sorted_models)[bound]
-            models = [os.path.join(model_path, model) for model in
-                      model_slice]
-        else:
-            if os.path.exists(model_path):
-                models = [os.path.join(model_path, 'epoch-%s.pth' % model_indice), ]
-            else:
-                models = [None]
-
-        if not os.path.exists(log_file):
-            log_dir = os.path.dirname(log_file)
-            ensure_dir(log_dir)
-        results = open(log_file, 'a')
-        link_file(log_file, log_file_link)
-
-        for model in models:
-            logger.info("Load Model: %s" % model)
             self.val_func = load_model(self.network, model)
             if len(self.devices ) == 1:
-                result_line, mean_IoU = self.single_process_evalutation()
+                result_line = self.single_process_evalutation()
             else:
-                result_line, mean_IoU = self.multi_process_evaluation()
+                result_line = self.multi_process_evaluation()
 
             results.write('Model: ' + model + '\n')
             results.write(result_line)
@@ -160,69 +96,6 @@ class Evaluator(object):
             results.flush()
 
         results.close()
-        # return the overall mean_iou
-        return result_line, mean_IoU
-    
-    
-    def run_eval_during_train(self, model_path, model_indice, log_file, log_file_link):
-        """There are four evaluation modes:
-            1.only eval a .pth model: -e *.pth
-            2.only eval a certain epoch: -e epoch
-            3.eval all epochs in a given section: -e start_epoch-end_epoch
-            4.eval all epochs from a certain started epoch: -e start_epoch-
-            """
-        if '.pth' in model_indice:
-            models = [model_indice, ]
-        elif "-" in model_indice:
-            start_epoch = int(model_indice.split("-")[0])
-            end_epoch = model_indice.split("-")[1]
-
-            models = os.listdir(model_path)
-            models.remove("epoch-last.pth")
-            sorted_models = [None] * len(models)
-            model_idx = [0] * len(models)
-
-            for idx, m in enumerate(models):
-                num = m.split(".")[0].split("-")[1]
-                model_idx[idx] = num
-                sorted_models[idx] = m
-            model_idx = np.array([int(i) for i in model_idx])
-
-            down_bound = model_idx >= start_epoch
-            up_bound = [True] * len(sorted_models)
-            if end_epoch:
-                end_epoch = int(end_epoch)
-                assert start_epoch < end_epoch
-                up_bound = model_idx <= end_epoch
-            bound = up_bound * down_bound
-            model_slice = np.array(sorted_models)[bound]
-            models = [os.path.join(model_path, model) for model in
-                      model_slice]
-        else:
-            if os.path.exists(model_path):
-                models = [os.path.join(model_path, 'epoch-%s.pth' % model_indice), ]
-            else:
-                models = [None]
-
-        results = open(log_file, 'a')
-        link_file(log_file, log_file_link)
-
-        for model in models:
-            logger.info("Load Model: %s" % model)
-            self.val_func = load_model(self.network, model)
-            if len(self.devices ) == 1:
-                result_line, mean_IoU = self.single_process_evalutation()
-            else:
-                result_line, mean_IoU = self.multi_process_evaluation()
-
-            results.write('Model: ' + model + '\n')
-            results.write(result_line)
-            results.write('\n')
-            results.flush()
-
-        results.close()
-        # return the overall mean_iou
-        return result_line, mean_IoU
 
 
     def single_process_evalutation(self):
@@ -232,13 +105,13 @@ class Evaluator(object):
         all_results = []
         for idx in tqdm(range(self.ndata)):
             dd = self.dataset[idx]
-            results_dict = self.func_per_iteration(dd,self.devices[0], self.config)
+            results_dict = self.func_per_iteration(dd,self.devices[0])
             all_results.append(results_dict)
-        result_line, mean_IoU = self.compute_metric(all_results, self.config)
+        result_line = self.compute_metric(all_results)
         logger.info(
             'Evaluation Elapsed Time: %.2fs' % (
                     time.perf_counter() - start_eval_time))
-        return result_line, mean_IoU
+        return result_line
 
 
     def multi_process_evaluation(self):
@@ -268,16 +141,16 @@ class Evaluator(object):
             t = self.results_queue.get()
             all_results.append(t)
             if self.verbose:
-                self.compute_metric(all_results, self.config)
+                self.compute_metric(all_results)
 
         for p in procs:
             p.join()
 
-        result_line, mean_IoU = self.compute_metric(all_results, self.config)
+        result_line = self.compute_metric(all_results)
         logger.info(
             'Evaluation Elapsed Time: %.2fs' % (
                     time.perf_counter() - start_eval_time))
-        return result_line, mean_IoU
+        return result_line
 
     def worker(self, shred_list, device):
         start_load_time = time.time()
@@ -286,13 +159,13 @@ class Evaluator(object):
 
         for idx in shred_list:
             dd = self.dataset[idx]
-            results_dict = self.func_per_iteration(dd, device, self.config)
+            results_dict = self.func_per_iteration(dd, device)
             self.results_queue.put(results_dict)
 
-    def func_per_iteration(self, data, device, config):
+    def func_per_iteration(self, data, device):
         raise NotImplementedError
 
-    def compute_metric(self, results, config):
+    def compute_metric(self, results):
         raise NotImplementedError
 
     # evaluate the whole image at once
@@ -429,73 +302,6 @@ class Evaluator(object):
         return p_img
 
     
-    # Whole image evaluation for RGB + X (fast but lower accuracy)
-    def whole_eval_rgbX(self, img, modal_x, output_size, device=None):
-        """Evaluate whole image at once (resize to model input size).
-
-        Args:
-            img: RGB image (H, W, 3)
-            modal_x: Modal X image (H, W) or (H, W, C)
-            output_size: Output size (H, W)
-            device: CUDA device
-
-        Returns:
-            pred: Prediction (H, W)
-        """
-        processed_pred = np.zeros((output_size[0], output_size[1], self.class_num))
-
-        # Get target size from config (training size for fast inference)
-        if self.config is not None:
-            target_h = getattr(self.config, 'image_height', 768)
-            target_w = getattr(self.config, 'image_width', 768)
-        else:
-            target_h, target_w = 768, 768
-
-        # Resize to fixed target size (not scale factor)
-        scaled_img = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-        if len(modal_x.shape) == 2:
-            scaled_modal_x = cv2.resize(modal_x, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
-        else:
-            scaled_modal_x = cv2.resize(modal_x, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-
-        # Process image
-        input_data, input_modal_x = self.process_image_rgbX_whole(scaled_img, scaled_modal_x)
-
-        # Forward pass
-        pred = self.val_func_process_rgbX(input_data, input_modal_x, device)
-        pred = pred.permute(1, 2, 0)
-
-        # Resize back to original size
-        processed_pred += cv2.resize(pred.cpu().numpy(),
-                                     (output_size[1], output_size[0]),
-                                     interpolation=cv2.INTER_LINEAR)
-
-        pred = processed_pred.argmax(2)
-        return pred
-
-    def process_image_rgbX_whole(self, img, modal_x):
-        """Process RGB and modal X images without padding (for whole image eval)."""
-        p_img = img
-        p_modal_x = modal_x
-
-        if img.shape[2] < 3:
-            im_b = p_img
-            im_g = p_img
-            im_r = p_img
-            p_img = np.concatenate((im_b, im_g, im_r), axis=2)
-
-        p_img = normalize(p_img, self.norm_mean, self.norm_std)
-        p_modal_x = (p_modal_x.astype(np.float32) - 0.5) / 0.5
-
-        p_img = p_img.transpose(2, 0, 1)  # 3 H W
-
-        if len(modal_x.shape) == 2:
-            p_modal_x = p_modal_x[np.newaxis, ...]
-        else:
-            p_modal_x = p_modal_x.transpose(2, 0, 1)  # 3 H W
-
-        return p_img, p_modal_x
-
     # add new funtion for rgb and modal X segmentation
     def sliding_eval_rgbX(self, img, modal_x, crop_size, stride_rate, device=None):
         crop_size = to_2tuple(crop_size)
@@ -535,7 +341,6 @@ class Evaluator(object):
             r_grid = int(np.ceil((pad_rows - crop_size[0]) / stride[0])) + 1
             c_grid = int(np.ceil((pad_cols - crop_size[1]) / stride[1])) + 1
             data_scale = torch.zeros(self.class_num, pad_rows, pad_cols).cuda(device)
-            count_scale = torch.zeros(1, pad_rows, pad_cols).cuda(device)
 
             for grid_yidx in range(r_grid):
                 for grid_xidx in range(c_grid):
@@ -557,8 +362,7 @@ class Evaluator(object):
                     temp_score = temp_score[:, tmargin[0]:(temp_score.shape[1] - tmargin[1]),
                                             tmargin[2]:(temp_score.shape[2] - tmargin[3])]
                     data_scale[:, s_y: e_y, s_x: e_x] += temp_score
-                    count_scale[:, s_y: e_y, s_x: e_x] += 1
-            score = data_scale / count_scale.clamp_min(1.0)
+            score = data_scale
             score = score[:, margin[0]:(score.shape[1] - margin[1]),
                     margin[2]:(score.shape[2] - margin[3])]
 
@@ -586,6 +390,9 @@ class Evaluator(object):
                     score_flip = self.val_func(input_data, input_modal_x)
                     score_flip = score_flip[0]
                     score += score_flip.flip(-1)
+                # Fix 8: Do NOT apply exp() to logits (matching CMNeXt)
+                # CMNeXt uses raw logits for argmax, exp() distorts relative ordering
+                pass
         
         return score
 
@@ -598,14 +405,17 @@ class Evaluator(object):
             im_b = p_img
             im_g = p_img
             im_r = p_img
-            p_img = np.concatenate((im_b, im_g, im_r), axis=2)
+            p_img = np.concatenate((im_b, im_g, im_r), amodal_xis=2)
     
         p_img = normalize(p_img, self.norm_mean, self.norm_std)
-        p_modal_x = (p_modal_x.astype(np.float32) - 0.5) / 0.5
+        if len(modal_x.shape) == 2:
+            p_modal_x = normalize(p_modal_x, 0, 1)
+        else:
+            p_modal_x = normalize(p_modal_x, self.norm_mean, self.norm_std)
     
         if crop_size is not None:
             p_img, margin = pad_image_to_shape(p_img, crop_size, cv2.BORDER_CONSTANT, value=0)
-            p_modal_x, _ = pad_image_to_shape(p_modal_x, crop_size, cv2.BORDER_CONSTANT, value=-1.0)
+            p_modal_x, _ = pad_image_to_shape(p_modal_x, crop_size, cv2.BORDER_CONSTANT, value=0)
             p_img = p_img.transpose(2, 0, 1)
             if len(modal_x.shape) == 2:
                 p_modal_x = p_modal_x[np.newaxis, ...]

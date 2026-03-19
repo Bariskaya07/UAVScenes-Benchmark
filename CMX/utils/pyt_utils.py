@@ -131,7 +131,7 @@ def load_restore_model(model, model_file):
         return model
 
     if isinstance(model_file, str):
-        state_dict = torch.load(model_file, weights_only=False)
+        state_dict = torch.load(model_file)
         if 'model' in state_dict.keys():
             state_dict = state_dict['model']
         elif 'state_dict' in state_dict.keys():
@@ -159,7 +159,7 @@ def load_model(model, model_file, is_restore=False):
         return model
 
     if isinstance(model_file, str):
-        state_dict = torch.load(model_file, map_location='cpu', weights_only=False)
+        state_dict = torch.load(model_file)
         if 'model' in state_dict.keys():
             state_dict = state_dict['model']
         elif 'state_dict' in state_dict.keys():
@@ -171,10 +171,9 @@ def load_model(model, model_file, is_restore=False):
     t_ioend = time.time()
 
     if is_restore:
-        # Strip 'module.' prefix if present (from DDP-saved checkpoints)
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
-            name = k.replace('module.', '', 1) if k.startswith('module.') else k
+            name = 'module.' + k
             new_state_dict[name] = v
         state_dict = new_state_dict
 
@@ -196,6 +195,7 @@ def parse_devices(input_devices):
     if input_devices.endswith('*'):
         devices = list(range(torch.cuda.device_count()))
         return devices
+
     devices = []
     for d in input_devices.split(','):
         if '-' in d:
@@ -209,7 +209,7 @@ def parse_devices(input_devices):
                 devices.append(sd)
         else:
             device = int(d)
-            # assert device < torch.cuda.device_count()
+            assert device < torch.cuda.device_count()
             devices.append(device)
 
     logger.info('using devices {}'.format(

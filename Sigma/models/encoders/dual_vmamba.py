@@ -13,6 +13,8 @@ from engine.logger import get_logger
 from models.encoders.vmamba import Backbone_VSSM, CrossMambaFusionBlock, ConcatMambaFusionBlock
 
 logger = get_logger()
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PRETRAIN_DIR = os.path.join(REPO_ROOT, 'pretrained', 'vmamba')
 
 
 class RGBXTransformer(nn.Module):
@@ -116,7 +118,7 @@ class vssm_tiny(RGBXTransformer):
         super(vssm_tiny, self).__init__(
             depths=[2, 2, 9, 2], 
             dims=96,
-            pretrained=os.path.expanduser('~/uavscenes007/pretrained/vssm1_tiny_0230s_ckpt_epoch_264.pth'),
+            pretrained=os.path.join(PRETRAIN_DIR, 'Vmamba-T.pth'),
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.2,
@@ -127,7 +129,7 @@ class vssm_small(RGBXTransformer):
         super(vssm_small, self).__init__(
             depths=[2, 2, 27, 2],
             dims=96,
-            pretrained='pretrained/vmamba/vssmsmall_dp03_ckpt_epoch_238.pth',
+            pretrained=os.path.join(PRETRAIN_DIR, 'vssmsmall_dp03_ckpt_epoch_238.pth'),
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.3,
@@ -138,7 +140,7 @@ class vssm_base(RGBXTransformer):
         super(vssm_base, self).__init__(
             depths=[2, 2, 27, 2],
             dims=128,
-            pretrained='pretrained/vmamba/vssmbase_dp06_ckpt_epoch_241.pth',
+            pretrained=os.path.join(PRETRAIN_DIR, 'vssmbase_dp06_ckpt_epoch_241.pth'),
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.6, # VMamba-B with droppath 0.5 + no ema. VMamba-B* represents for VMamba-B with droppath 0.6 + ema

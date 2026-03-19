@@ -69,8 +69,20 @@ def parse_args():
 
 def load_config(config_path):
     """Load YAML config file."""
+    config_path = os.path.abspath(config_path)
     with open(config_path, 'r') as f:
         config_dict = yaml.safe_load(f)
+    repo_root = os.path.dirname(os.path.dirname(config_path))
+
+    def resolve_path(path_value):
+        if os.path.isabs(path_value):
+            return path_value
+        return os.path.abspath(os.path.join(repo_root, path_value))
+
+    config_dict['dataset']['data_path'] = resolve_path(config_dict['dataset']['data_path'])
+    config_dict['model']['pretrained'] = resolve_path(config_dict['model']['pretrained'])
+    config_dict['logging']['log_dir'] = resolve_path(config_dict['logging']['log_dir'])
+    config_dict['logging']['checkpoint_dir'] = resolve_path(config_dict['logging']['checkpoint_dir'])
     return Config(config_dict)
 
 

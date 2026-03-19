@@ -63,6 +63,8 @@ except ImportError:
 
 from datasets.uavscenes import UAVScenesDataset
 
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 
 def _is_main_process() -> bool:
     return (not dist.is_initialized()) or dist.get_rank() == 0
@@ -126,7 +128,7 @@ def get_arguments():
     parser.add_argument(
         "--train-dir",
         type=str,
-        default="/home/bariskaya/Projelerim/UAV/UAVScenesData",
+        default=os.path.join(REPO_ROOT, "data", "UAVScenes"),
         help="Path to dataset directory",
     )
     parser.add_argument(
@@ -1120,7 +1122,7 @@ def main():
     gpu = setup_ddp()
 
     # Create checkpoint directory
-    ckpt_dir = os.path.join("ckpt", args.ckpt)
+    ckpt_dir = os.path.join(REPO_ROOT, "ckpt", args.ckpt)
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # Setup logger

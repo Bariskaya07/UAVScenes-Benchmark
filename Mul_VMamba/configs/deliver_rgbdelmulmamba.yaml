@@ -4,7 +4,7 @@ SAVE_DIR        : 'output'          # output folder name used for saving the mod
 MODEL:
   NAME          : MulMamba                                          # name of the model you are using
   BACKBONE      : MulMamba-T                                         # model variant
-  PRETRAINED    : 'checkpoints/pretrained/Vmamba/VmambaTiny.pth'     # backbone model's weight
+  PRETRAINED    : 'checkpoints/pretrained/Vmamba/Vmamba-T.pth'       # backbone model's weight
   RESUME        : ''                                                # checkpoint file
   EXP       : ''                                 # experiment name
 

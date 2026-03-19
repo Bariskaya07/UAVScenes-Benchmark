@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import argparse
+import random
 import numpy as np
 from tqdm import tqdm
 
@@ -43,6 +44,41 @@ logger = get_logger()
 
 os.environ['MASTER_PORT'] = '16005'
 
+
+def get_fair_param_groups(model, lr, weight_decay):
+    decay_params = []
+    no_decay_params = []
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        is_no_decay = (
+            param.ndim == 1
+            or name.endswith('.bias')
+            or 'norm' in name.lower()
+            or 'bn' in name.lower()
+        )
+        if is_no_decay:
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+
+    return [
+        {'params': decay_params, 'lr': lr, 'weight_decay': weight_decay},
+        {'params': no_decay_params, 'lr': lr, 'weight_decay': 0.0},
+    ]
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    cudnn.deterministic = True
+    cudnn.benchmark = False
+
 with Engine(custom_parser=parser) as engine:
     args = parser.parse_args()
     print(args)
@@ -65,13 +101,10 @@ with Engine(custom_parser=parser) as engine:
     print(config.tb_dir)
     print("=======================================")
 
-    cudnn.benchmark = True
     seed = config.seed
     if engine.distributed:
-        seed = engine.local_rank
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
+        seed = config.seed + engine.local_rank
+    set_seed(seed)
 
     # data loader - use UAVScenesDataset for UAVScenes, RGBXDataset for others
     if dataset_name == 'uavscenes':
@@ -79,6 +112,10 @@ with Engine(custom_parser=parser) as engine:
     else:
         DatasetClass = RGBXDataset
     train_loader, train_sampler = get_train_loader(engine, DatasetClass, config)
+    niters_per_epoch = len(train_loader)
+    config.niters_per_epoch = niters_per_epoch
+    if hasattr(train_loader, 'dataset'):
+        config.num_train_imgs = len(train_loader.dataset)
 
     if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
         tb_dir = config.tb_dir + '/{}'.format(time.strftime("%b%d_%d-%H-%M", time.localtime()))
@@ -106,19 +143,32 @@ with Engine(custom_parser=parser) as engine:
     if engine.distributed:
         base_lr = config.lr
     
-    params_list = []
-    params_list = group_weight(params_list, model, BatchNorm2d, base_lr)
-    
     if config.optimizer == 'AdamW':
-        optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
+        optimizer = torch.optim.AdamW(
+            get_fair_param_groups(model, lr=base_lr, weight_decay=config.weight_decay),
+            lr=base_lr,
+            betas=(0.9, 0.999),
+            weight_decay=config.weight_decay,
+        )
     elif config.optimizer == 'SGDM':
-        optimizer = torch.optim.SGD(params_list, lr=base_lr, momentum=config.momentum, weight_decay=config.weight_decay)
+        optimizer = torch.optim.SGD(
+            get_fair_param_groups(model, lr=base_lr, weight_decay=config.weight_decay),
+            lr=base_lr,
+            momentum=config.momentum,
+            weight_decay=config.weight_decay,
+        )
     else:
         raise NotImplementedError
 
     # config lr policy
-    total_iteration = config.nepochs * config.niters_per_epoch
-    lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
+    total_iteration = config.nepochs * niters_per_epoch
+    lr_policy = WarmUpPolyLR(
+        base_lr,
+        config.lr_power,
+        total_iteration,
+        niters_per_epoch * config.warm_up_epoch,
+        warmup_ratio=config.warmup_ratio,
+    )
 
     if engine.distributed:
         logger.info('.............distributed training.............')
@@ -168,9 +218,9 @@ with Engine(custom_parser=parser) as engine:
             for idx in range(batch_start, batch_end):
                 dd = val_dataset[idx]
                 img   = dd['data'].astype(np.float32) / 255.0       # (H, W, 3)
-                modal = dd['modal_x'].astype(np.float32) / 255.0    # (H, W, 3)
+                modal = dd['modal_x'].astype(np.float32)            # (H, W, 3), already in [0, 1]
                 batch_rgb.append(((img   - mean) / std).transpose(2, 0, 1))
-                batch_modal.append(((modal - mean) / std).transpose(2, 0, 1))
+                batch_modal.append((((modal - 0.5) / 0.5)).transpose(2, 0, 1))
                 batch_labels.append(dd['label'])
 
             rgb_t   = torch.from_numpy(np.stack(batch_rgb)).float().cuda(device)
@@ -213,18 +263,19 @@ with Engine(custom_parser=parser) as engine:
                     'eval_source': config.eval_source,
                     'class_names': config.class_names,
                     'dataset_path': config.dataset_path if hasattr(config, 'dataset_path') else '',
-                    'hag_max_meters': config.hag_max_meters if hasattr(config, 'hag_max_meters') else 50.0}
+                    'hag_max_meters': config.hag_max_meters if hasattr(config, 'hag_max_meters') else 50.0,
+                    'aux_channels': getattr(config, 'aux_channels', 3)}
     val_pre = ValPre(config)
     val_dataset = DatasetClass(val_setting, 'val', val_pre)
 
-    best_mean_iou = 0.0  # Track the best mean IoU for model saving
-    best_epoch = 100000  # Track the epoch with the best mean IoU for model saving
+    best_mean_iou = 0.0
+    best_epoch = -1
     
     for epoch in range(engine.state.epoch, config.nepochs+1):
         if engine.distributed:
             train_sampler.set_epoch(epoch)
         bar_format = '{desc}[{elapsed}<{remaining},{rate_fmt}]'
-        pbar = tqdm(range(config.niters_per_epoch), file=sys.stdout,
+        pbar = tqdm(range(niters_per_epoch), file=sys.stdout,
                     bar_format=bar_format)
         dataloader = iter(train_loader)
 
@@ -232,6 +283,11 @@ with Engine(custom_parser=parser) as engine:
 
         for idx in pbar:
             engine.update_iteration(epoch, idx)
+
+            current_idx = (epoch - 1) * niters_per_epoch + idx
+            lr = lr_policy.get_lr(current_idx)
+            for i in range(len(optimizer.param_groups)):
+                optimizer.param_groups[i]['lr'] = lr
 
             minibatch = next(dataloader)
             imgs = minibatch['data']
@@ -242,13 +298,19 @@ with Engine(custom_parser=parser) as engine:
             gts = gts.cuda(non_blocking=True)
             modal_xs = modal_xs.cuda(non_blocking=True)
 
-            aux_rate = 0.2
-            with autocast(dtype=torch.bfloat16):
+            with autocast():
                 loss = model(imgs, modal_xs, gts)
 
-            # skip NaN/Inf loss batches (corrupted samples or overflow)
-            if not torch.isfinite(loss):
+            if engine.distributed:
+                finite_flag = torch.tensor(1 if torch.isfinite(loss) else 0, device=imgs.device)
+                dist.all_reduce(finite_flag, op=dist.ReduceOp.MIN)
+                is_finite = finite_flag.item() == 1
+            else:
+                is_finite = torch.isfinite(loss).item()
+
+            if not is_finite:
                 optimizer.zero_grad()
+                torch.cuda.empty_cache()
                 continue
 
             # reduce the whole loss over multi-gpu
@@ -257,29 +319,39 @@ with Engine(custom_parser=parser) as engine:
 
             optimizer.zero_grad()
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            if engine.distributed:
+                grad_finite_flag = torch.tensor(1 if torch.isfinite(grad_norm) else 0, device=imgs.device)
+                dist.all_reduce(grad_finite_flag, op=dist.ReduceOp.MIN)
+                grad_is_finite = grad_finite_flag.item() == 1
+            else:
+                grad_is_finite = torch.isfinite(grad_norm).item()
+
+            if not grad_is_finite:
+                optimizer.zero_grad()
+                scaler.update()
+                torch.cuda.empty_cache()
+                continue
+
             scaler.step(optimizer)
             scaler.update()
-
-            current_idx = (epoch- 1) * config.niters_per_epoch + idx 
-            lr = lr_policy.get_lr(current_idx)
-
-            for i in range(len(optimizer.param_groups)):
-                optimizer.param_groups[i]['lr'] = lr
 
             if engine.distributed:
                 if dist.get_rank() == 0:
                     sum_loss += reduce_loss.item()
                     print_str = 'Epoch {}/{}'.format(epoch, config.nepochs) \
-                            + ' Iter {}/{}:'.format(idx + 1, config.niters_per_epoch) \
+                            + ' Iter {}/{}:'.format(idx + 1, niters_per_epoch) \
                             + ' lr=%.4e' % lr \
                             + ' loss=%.4f total_loss=%.4f' % (reduce_loss.item(), (sum_loss / (idx + 1)))
                     pbar.set_description(print_str, refresh=False)
             else:
-                sum_loss += loss
+                sum_loss += loss.item()
                 print_str = 'Epoch {}/{}'.format(epoch, config.nepochs) \
-                        + ' Iter {}/{}:'.format(idx + 1, config.niters_per_epoch) \
+                        + ' Iter {}/{}:'.format(idx + 1, niters_per_epoch) \
                         + ' lr=%.4e' % lr \
-                        + ' loss=%.4f total_loss=%.4f' % (loss, (sum_loss / (idx + 1)))
+                        + ' loss=%.4f total_loss=%.4f' % (loss.item(), (sum_loss / (idx + 1)))
                 pbar.set_description(print_str, refresh=False)
             del loss
             
@@ -297,12 +369,12 @@ with Engine(custom_parser=parser) as engine:
                 os.remove(last_ckpt)
             engine.save_checkpoint(last_ckpt)
 
-        # Save named checkpoint for best-model tracking (every checkpoint_step epochs)
+        # Save named checkpoint for evaluation/best-model tracking (every checkpoint_step epochs)
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if engine.distributed and (engine.local_rank == 0):
-                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth'))
+                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
             elif not engine.distributed:
-                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth'))
+                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
 
         # devices_val = [engine.local_rank] if engine.distributed else [0]
         torch.cuda.empty_cache()
@@ -319,15 +391,12 @@ with Engine(custom_parser=parser) as engine:
 
                         # Determine if the model performance improved
                         if mean_IoU > best_mean_iou:
-                            checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{best_epoch}-best.pth')
-                            if os.path.exists(checkpoint_path):
-                                os.remove(checkpoint_path)
                             best_epoch = epoch
                             best_mean_iou = mean_IoU
-                        else:
-                            checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth')
-                            if os.path.exists(checkpoint_path):
-                                os.remove(checkpoint_path)
+                            best_ckpt_path = os.path.join(config.checkpoint_dir, 'epoch-best.pth')
+                            src_ckpt_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
+                            if os.path.exists(src_ckpt_path):
+                                shutil.copy(src_ckpt_path, best_ckpt_path)
 
                     model.train()
                     apply_freeze_bn_if_needed(model)
@@ -341,15 +410,12 @@ with Engine(custom_parser=parser) as engine:
 
                     # Determine if the model performance improved
                     if mean_IoU > best_mean_iou:
-                        checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{best_epoch}-best.pth')
-                        if os.path.exists(checkpoint_path):
-                            os.remove(checkpoint_path)
                         best_epoch = epoch
                         best_mean_iou = mean_IoU
-                    else:
-                        checkpoint_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth')
-                        if os.path.exists(checkpoint_path):
-                            os.remove(checkpoint_path)
+                        best_ckpt_path = os.path.join(config.checkpoint_dir, 'epoch-best.pth')
+                        src_ckpt_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
+                        if os.path.exists(src_ckpt_path):
+                            shutil.copy(src_ckpt_path, best_ckpt_path)
                 model.train()
                 apply_freeze_bn_if_needed(model)
 
@@ -380,13 +446,14 @@ with Engine(custom_parser=parser) as engine:
                     'eval_source': config.eval_source,
                     'class_names': config.class_names,
                     'dataset_path': config.dataset_path if hasattr(config, 'dataset_path') else '',
-                    'hag_max_meters': config.hag_max_meters if hasattr(config, 'hag_max_meters') else 50.0}
+                    'hag_max_meters': config.hag_max_meters if hasattr(config, 'hag_max_meters') else 50.0,
+                    'aux_channels': getattr(config, 'aux_channels', 3)}
     test_pre = ValPre(config, resize=False)  # Test uses full resolution for sliding window
     test_dataset = DatasetClass(test_setting, 'test', test_pre)
     logger.info(f"Test set: {len(test_dataset)} samples")
 
     # Load best model
-    best_ckpt = os.path.join(config.checkpoint_dir, f'epoch-{best_epoch}.pth')
+    best_ckpt = os.path.join(config.checkpoint_dir, 'epoch-best.pth')
     if os.path.exists(best_ckpt):
         logger.info(f"Loading best checkpoint: {best_ckpt}")
         checkpoint = torch.load(best_ckpt, map_location='cpu', weights_only=False)

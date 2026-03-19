@@ -21,10 +21,22 @@ from torch import distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from semseg.utils.utils import fix_seeds, setup_cudnn, cleanup_ddp, setup_ddp, get_logger, cal_flops, print_iou
 
-def pad_image(img, target_size):
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_repo_path(path_str):
+    if not path_str:
+        return Path(path_str)
+    path = Path(os.path.expanduser(path_str))
+    if path.is_absolute():
+        return path
+    return REPO_ROOT / path
+
+
+def pad_image(img, target_size, value=0.0):
     rows_to_pad = max(target_size[0] - img.shape[2], 0)
     cols_to_pad = max(target_size[1] - img.shape[3], 0)
-    padded_img = F.pad(img, (0, cols_to_pad, 0, rows_to_pad), "constant", 0)
+    padded_img = F.pad(img, (0, cols_to_pad, 0, rows_to_pad), "constant", value)
     return padded_img
 
 @torch.no_grad()
@@ -42,12 +54,12 @@ def sliding_predict(model, image, num_classes, flip=True, crop_size=768, stride_
     image_size = image[0].shape
     tile_size = (crop_size, crop_size)
     stride = stride_size
+    device = image[0].device
 
     num_rows = int(ceil((image_size[2] - tile_size[0]) / stride) + 1)
     num_cols = int(ceil((image_size[3] - tile_size[1]) / stride) + 1)
-    total_predictions = torch.zeros((num_classes, image_size[2], image_size[3]), device=torch.device('cuda'))
-    count_predictions = torch.zeros((image_size[2], image_size[3]), device=torch.device('cuda'))
-    tile_counter = 0
+    total_predictions = torch.zeros((num_classes, image_size[2], image_size[3]), device=device)
+    count_predictions = torch.zeros((image_size[2], image_size[3]), device=device)
 
     for row in range(num_rows):
         for col in range(num_cols):
@@ -56,17 +68,20 @@ def sliding_predict(model, image, num_classes, flip=True, crop_size=768, stride_
             y_max = min(y_min + tile_size[0], image_size[2])
 
             img = [modal[:, :, y_min:y_max, x_min:x_max] for modal in image]
-            padded_img = [pad_image(modal, tile_size) for modal in img]
-            tile_counter += 1
+            padded_img = [
+                pad_image(modal, tile_size, 0.0 if i == 0 else -1.0)
+                for i, modal in enumerate(img)
+            ]
             padded_prediction = model(padded_img)
             if flip:
                 fliped_img = [padded_modal.flip(-1) for padded_modal in padded_img]
                 fliped_predictions = model(fliped_img)
-                padded_prediction += fliped_predictions.flip(-1)
+                padded_prediction = 0.5 * (padded_prediction + fliped_predictions.flip(-1))
             predictions = padded_prediction[:, :, :img[0].shape[2], :img[0].shape[3]]
             count_predictions[y_min:y_max, x_min:x_max] += 1
             total_predictions[:, y_min:y_max, x_min:x_max] += predictions.squeeze(0)
 
+    total_predictions /= count_predictions.clamp(min=1.0).unsqueeze(0)
     return total_predictions.unsqueeze(0)
 
 @torch.no_grad()
@@ -155,9 +170,14 @@ def main(cfg):
     cases = ['motionblur', 'overexposure', 'underexposure', 'lidarjitter', 'eventlowres']
     # cases = [None] # all
     
-    model_path = Path(eval_cfg['MODEL_PATH'])
+    model_path = resolve_repo_path(eval_cfg['MODEL_PATH'])
     if not model_path.exists():
-        raise FileNotFoundError
+        fallback_root = resolve_repo_path(cfg.get('SAVE_DIR', 'output'))
+        candidates = sorted(fallback_root.rglob(model_path.name))
+        if len(candidates) == 1:
+            model_path = candidates[0]
+        else:
+            raise FileNotFoundError(f"Model checkpoint not found: {model_path}")
     print(f"Evaluating {model_path}...")
 
     print(f"Split: {split}, Eval mode: {eval_mode} (sliding={sliding})")
@@ -174,7 +194,7 @@ def main(cfg):
             }
         # Use split from config (set via --split argument)
         dataset = eval(cfg['DATASET']['NAME'])(
-            cfg['DATASET']['ROOT'],
+            str(resolve_repo_path(cfg['DATASET']['ROOT'])),
             split,
             transform,
             cfg['DATASET']['MODALS'],
@@ -215,12 +235,13 @@ def main(cfg):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='configs/deliver_rgbdelmulmamba.yaml')
+    parser.add_argument('--cfg', type=str, default='configs/uavscenes_rgbhagmulmamba.yaml')
     parser.add_argument('--split', type=str, default='val', choices=['val', 'test'],
                         help='Dataset split to evaluate (val or test)')
     args = parser.parse_args()
 
-    with open(args.cfg) as f:
+    cfg_path = resolve_repo_path(args.cfg)
+    with open(cfg_path) as f:
         cfg = yaml.load(f, Loader=yaml.SafeLoader)
 
     # Set split in config for main() to use

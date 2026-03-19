@@ -21,7 +21,7 @@ SAVE_DIR        : 'output/DELIVER_MulVMamba'
 MODEL:
   NAME          : MulMamba
   BACKBONE      : MulMamba-T
-  PRETRAINED    : 'checkpoints/pretrained/Vmamba/VmambaTiny.pth'
+  PRETRAINED    : 'checkpoints/pretrained/Vmamba/Vmamba-T.pth'
   RESUME        : ''
   EXP           : 'deliver_rgb_lidar'
   EXTRA_IN_CHANS: 3                                                 # LiDAR: 1-ch stacked to 3-ch

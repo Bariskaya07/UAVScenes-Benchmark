@@ -182,7 +182,7 @@ class UAVScenes(Dataset):
         case=None,
         hag_max_meters: float = 50.0,
         aux_channels: int = 3,
-        color_jitter_prob: float = 0.2,
+        color_jitter_prob: float = 1.0,
         gaussian_blur_prob: float = 0.2,
         gaussian_blur_kernel: int = 3,
     ) -> None:
@@ -301,9 +301,9 @@ class UAVScenes(Dataset):
     def transform_tr(self, sample):
         """Training transforms standardized for fair benchmark comparison."""
         composed_transforms = Compose([
-            RandomColorJitter(prob=self.color_jitter_prob, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+            RandomScaleCrop(scale_range=(0.5, 2.0), crop_size=self.crop_size, fill=255),
             RandomHorizontalFlip(),
-            RandomScaleCrop(base_size=self.base_size, crop_size=self.crop_size, fill=255),
+            RandomColorJitter(prob=self.color_jitter_prob, brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
             RandomGaussianBlur(prob=self.gaussian_blur_prob, kernel_size=self.gaussian_blur_kernel),
             Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensor(),
@@ -311,9 +311,8 @@ class UAVScenes(Dataset):
         return composed_transforms(sample)
 
     def transform_val(self, sample):
-        """Validation/Test transforms: FixScaleCrop, Normalize, ToTensor"""
+        """Validation transforms for fast whole-image evaluation."""
         composed_transforms = Compose([
-            FixScaleCrop(crop_size=self.crop_size),
             Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensor(),
         ])
@@ -385,21 +384,23 @@ class Compose:
 
 
 class Normalize:
-    """Normalize RGB image with mean and standard deviation."""
+    """Normalize RGB with ImageNet stats and HAG from [0, 1] to [-1, 1]."""
     def __init__(self, mean=(0., 0., 0.), std=(1., 1., 1.)):
         self.mean = mean
         self.std = std
 
     def __call__(self, sample):
         img = sample['image']
+        hag = sample['hag']
         img = np.array(img).astype(np.float32)
         img -= self.mean
         img /= self.std
+        hag = (np.array(hag).astype(np.float32) - 0.5) / 0.5
 
         return {
             'image': img,
             'label': sample['label'],
-            'hag': sample['hag'],
+            'hag': hag,
         }
 
 
@@ -449,33 +450,32 @@ class RandomColorJitter:
         if random.random() >= self.prob:
             return sample
 
-        img = np.clip(sample['image'].astype(np.float32), 0.0, 1.0)
+        img = np.clip(sample['image'].astype(np.float32) * 255.0, 0.0, 255.0)
 
         if random.random() < 0.5:
-            factor = random.uniform(1 - self.brightness, 1 + self.brightness)
-            img = np.clip(img * factor, 0.0, 1.0)
+            delta = random.uniform(-self.brightness, self.brightness) * 255.0
+            img = np.clip(img + delta, 0.0, 255.0)
 
         if random.random() < 0.5:
             factor = random.uniform(1 - self.contrast, 1 + self.contrast)
-            mean = img.mean(axis=(0, 1), keepdims=True)
-            img = np.clip((img - mean) * factor + mean, 0.0, 1.0)
+            img = np.clip(img * factor, 0.0, 255.0)
 
         do_saturation = random.random() < 0.5
         do_hue = random.random() < 0.5
         if do_saturation or do_hue:
-            hsv = cv2.cvtColor((img * 255.0).astype(np.uint8), cv2.COLOR_RGB2HSV)
+            hsv = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
 
             if do_saturation:
                 sat_factor = random.uniform(1 - self.saturation, 1 + self.saturation)
-                hsv[..., 1] = np.clip(hsv[..., 1].astype(np.float32) * sat_factor, 0, 255).astype(np.uint8)
+                hsv[..., 1] = np.clip(hsv[..., 1] * sat_factor, 0.0, 255.0)
 
             if do_hue:
                 hue_delta = random.uniform(-self.hue, self.hue) * 180.0
-                hsv[..., 0] = np.mod(hsv[..., 0].astype(np.float32) + hue_delta, 180.0).astype(np.uint8)
+                hsv[..., 0] = np.mod(hsv[..., 0] + hue_delta, 180.0)
 
-            img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
+            img = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32)
 
-        sample['image'] = img
+        sample['image'] = img / 255.0
         return sample
 
 
@@ -495,9 +495,9 @@ class RandomGaussianBlur:
 
 
 class RandomScaleCrop:
-    """Random scale and crop for data augmentation."""
-    def __init__(self, base_size, crop_size, fill=255):
-        self.base_size = base_size
+    """Continuous random resize followed by random crop."""
+    def __init__(self, scale_range, crop_size, fill=255):
+        self.scale_range = scale_range
         self.crop_size = crop_size
         self.fill = fill
 
@@ -506,16 +506,10 @@ class RandomScaleCrop:
         mask = sample['label']
         hag = sample['hag']
 
-        # Random scale (short edge)
-        short_size = random.randint(int(self.base_size * 0.5), int(self.base_size * 2.0))
         h, w = img.shape[:2]
-
-        if h > w:
-            ow = short_size
-            oh = int(1.0 * h * ow / w)
-        else:
-            oh = short_size
-            ow = int(1.0 * w * oh / h)
+        scale = random.uniform(self.scale_range[0], self.scale_range[1])
+        oh = max(1, int(h * scale))
+        ow = max(1, int(w * scale))
 
         # Resize
         img = cv2.resize(img, (ow, oh), interpolation=cv2.INTER_LINEAR)
@@ -523,7 +517,7 @@ class RandomScaleCrop:
         hag = cv2.resize(hag, (ow, oh), interpolation=cv2.INTER_LINEAR)
 
         # Pad if needed
-        if short_size < self.crop_size:
+        if oh < self.crop_size or ow < self.crop_size:
             padh = self.crop_size - oh if oh < self.crop_size else 0
             padw = self.crop_size - ow if ow < self.crop_size else 0
 
@@ -535,7 +529,8 @@ class RandomScaleCrop:
             mask_padded[:oh, :ow] = mask
             mask = mask_padded
 
-            hag_padded = np.zeros((oh + padh, ow + padw, 3), dtype=hag.dtype)
+            hag_channels = hag.shape[2] if hag.ndim == 3 else 1
+            hag_padded = np.zeros((oh + padh, ow + padw, hag_channels), dtype=hag.dtype)
             hag_padded[:oh, :ow] = hag
             hag = hag_padded
 

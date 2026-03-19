@@ -106,13 +106,14 @@ LABEL_REMAP = {
     25: 255,   # EMPTY -> ignore
 }
 
+_LABEL_LUT = np.full(256, 255, dtype=np.uint8)
+for _orig_id, _new_id in LABEL_REMAP.items():
+    _LABEL_LUT[_orig_id] = _new_id
+
 
 def remap_label(label):
     """Remap UAVScenes labels from 26 classes to 19 classes."""
-    remapped = np.full_like(label, 255, dtype=np.uint8)
-    for orig_id, new_id in LABEL_REMAP.items():
-        remapped[label == orig_id] = new_id
-    return remapped
+    return _LABEL_LUT[label]
 
 
 def load_hag(hag_path, max_height=50.0):
@@ -127,7 +128,7 @@ def load_hag(hag_path, max_height=50.0):
         max_height: Maximum height for normalization (default 50m)
 
     Returns:
-        Normalized HAG in [0, 255] range as uint8 (for compatibility with Sigma preprocessing)
+        Normalized HAG in [0, 1] range as float32
     """
     # Load 16-bit HAG
     hag_raw = cv2.imread(hag_path, cv2.IMREAD_UNCHANGED)
@@ -147,10 +148,7 @@ def load_hag(hag_path, max_height=50.0):
     # Normalize to [0, 1] range
     normalized_hag = np.clip(hag_meters / max_height, 0, 1)
 
-    # Convert to [0, 255] uint8 for Sigma preprocessing compatibility
-    hag_uint8 = (normalized_hag * 255).astype(np.uint8)
-
-    return hag_uint8
+    return normalized_hag.astype(np.float32)
 
 
 class UAVScenesDataset(data.Dataset):
@@ -242,10 +240,11 @@ class UAVScenesDataset(data.Dataset):
             f"{timestamp}{self._x_format}"
         )
 
-        # Load RGB
-        rgb = self._open_image(rgb_path, cv2.COLOR_BGR2RGB)
+        # Load RGB and convert BGR -> RGB
+        rgb = self._open_image(rgb_path, cv2.IMREAD_COLOR)
         if rgb is None:
             raise FileNotFoundError(f"RGB file not found: {rgb_path}")
+        rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
 
         # Load and remap label
         gt = self._open_image(gt_path, cv2.IMREAD_GRAYSCALE, dtype=np.uint8)
@@ -313,18 +312,29 @@ class UAVScenesDataset(data.Dataset):
                 print(f"[UAVScenes] Warning: RGB directory not found: {rgb_dir}")
                 continue
 
+            label_dir = os.path.join(
+                self._gt_path,
+                'interval5_CAM_label',
+                scene,
+                'interval5_CAM_label_id'
+            )
+
             # Get all jpg files in the directory
             for filename in sorted(os.listdir(rgb_dir)):
                 if filename.endswith(self._rgb_format):
                     # Extract timestamp (remove extension)
                     timestamp = filename.replace(self._rgb_format, '')
+                    label_path = os.path.join(
+                        label_dir,
+                        f"{timestamp}{self._gt_format}"
+                    )
                     # Check HAG file exists and is not empty
                     hag_path = os.path.join(
                         self._x_path,
                         scene,
                         f"{timestamp}{self._x_format}"
                     )
-                    if os.path.exists(hag_path) and os.path.getsize(hag_path) > 0:
+                    if os.path.exists(label_path) and os.path.exists(hag_path) and os.path.getsize(hag_path) > 0:
                         file_names.append((scene, timestamp))
 
         return file_names

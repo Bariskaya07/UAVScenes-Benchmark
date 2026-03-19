@@ -74,7 +74,7 @@ if __name__ == '__main__':
     # modals = ['img']
     modals = ['img', 'depth', 'event', 'lidar']
     model = MulMamba('MulMamba-T', 25, modals)
-    model.init_pretrained('checkpoints/pretrained/Vmamba/VmambaTiny.pth')
+    model.init_pretrained('checkpoints/pretrained/Vmamba/Vmamba-T.pth')
     x = [torch.zeros(2, 3, 960, 960), torch.ones(2, 3, 960, 960), torch.ones(2, 3, 960, 960)*2, torch.ones(2, 3, 960, 960) *3]
     for i in range(len(x)):
         x[i] = x[i].cuda()

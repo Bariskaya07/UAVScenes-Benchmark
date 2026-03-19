@@ -25,15 +25,14 @@ cfg = C
 
 C.seed = 42  # Fair comparison with CMNeXt/DFormerV2
 
-remoteip = os.popen('pwd').read()
-C.root_dir = os.path.abspath(os.path.join(os.getcwd(), './'))
-C.abs_dir = osp.realpath(".")
+C.root_dir = osp.dirname(osp.dirname(osp.abspath(__file__)))
+C.abs_dir = C.root_dir
 
 # ==============================================================================
 # Dataset Config
 # ==============================================================================
 C.dataset_name = 'UAVScenes'
-C.dataset_path = os.path.expanduser('~/uavscenes007/uavscenes-cmnext/UAVScenesData/UAVScenesData')
+C.dataset_path = osp.join(C.root_dir, 'datasets', 'UAVScenes')
 
 # Path structure for UAVScenes (GCS bucket: uavscenes007/uavscenes-cmnext/UAVScenesData/UAVScenesData/)
 # RGB: interval5_CAM_LIDAR/interval5_CAM_LIDAR/{scene}/interval5_CAM/{timestamp}.jpg
@@ -53,9 +52,9 @@ C.train_source = osp.join(C.dataset_path, "train.txt")
 C.eval_source = osp.join(C.dataset_path, "test.txt")
 C.is_test = False
 
-# Dataset statistics
-C.num_train_imgs = 15000  # ~15k training images (13 scenes - NewSplit)
-C.num_eval_imgs = 4500    # ~4.5k test images (4 scenes)
+# Dataset statistics (determined at runtime from dataset)
+C.num_train_imgs = None
+C.num_eval_imgs = None
 
 # 19 classes after remapping (from original 26)
 C.num_classes = 19
@@ -116,15 +115,15 @@ C.weight_decay = 0.01
 C.warmup_ratio = 0.1  # Initial LR = LR * warmup_ratio (CMNeXt paper setting)
 C.batch_size = 8      # Global batch size (engine divides by num_gpus → per-GPU=2 with 4 GPUs)
 C.nepochs = 60        # Training epochs
-C.niters_per_epoch = C.num_train_imgs // C.batch_size + 1
+C.niters_per_epoch = None  # Determined at runtime: len(train_loader)
 C.num_workers = 8
 
 # Augmentation (Standardized with CMNeXt for fair comparison)
-C.train_scale_array = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2.0]  # Scale range 0.5-2.0
+C.train_scale_array = [0.5, 2.0]  # Continuous random resize range
 C.use_photometric = True   # Photometric distortion (brightness, contrast, saturation, hue)
 C.use_gaussian_blur = True  # Gaussian blur enabled
-C.gaussian_blur_prob = 0.2  # Match benchmark standard
-C.gaussian_blur_kernel = 3  # Match benchmark standard
+C.gaussian_blur_prob = 0.2  # Match benchmark CMNeXt
+C.gaussian_blur_kernel = 3  # Match benchmark CMNeXt
 C.freeze_bn = True          # Match benchmark training policy (Gemini/Token/CMNeXt/HRFuser)
 C.warm_up_epoch = 3   # Warmup epochs (5% of total)
 
@@ -157,14 +156,14 @@ def add_path(path):
 
 add_path(osp.join(C.root_dir))
 
-C.log_dir = osp.abspath('log_final/log_uavscenes/' + 'log_' + C.dataset_name + '_' + C.backbone)
-C.tb_dir = osp.abspath(osp.join(C.log_dir, "tb"))
+C.log_dir = osp.join(C.root_dir, 'log_final', 'log_uavscenes', 'log_' + C.dataset_name + '_' + C.backbone)
+C.tb_dir = osp.join(C.log_dir, "tb")
 C.log_dir_link = C.log_dir
-C.checkpoint_dir = osp.abspath(osp.join(C.log_dir, "checkpoint"))
+C.checkpoint_dir = osp.join(C.log_dir, "checkpoint")
 
 exp_time = time.strftime('%Y_%m_%d_%H_%M_%S', time.localtime())
 C.log_file = C.log_dir + '/log_' + exp_time + '.log'
-C.link_log_file = C.log_file + '/log_last.log'
+C.link_log_file = C.log_dir + '/log_last.log'
 C.val_log_file = C.log_dir + '/val_' + exp_time + '.log'
 C.link_val_log_file = C.log_dir + '/val_last.log'
 
