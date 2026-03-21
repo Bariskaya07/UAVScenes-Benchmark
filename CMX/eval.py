@@ -2,21 +2,21 @@ import os
 import cv2
 import argparse
 import numpy as np
+import time
 
 import torch
 import torch.nn as nn
 
 from config import config
 from utils.pyt_utils import ensure_dir, link_file, load_model, parse_devices
-from utils.visualize import print_iou, show_img
+from utils.visualize import show_img
 from engine.evaluator import Evaluator
 from engine.logger import get_logger
-from utils.metric import hist_info, compute_score
+from utils.metric import hist_info, format_detailed_report
 from dataloader.UAVScenesDataset import UAVScenesDataset
 from models.builder import EncoderDecoder as segmodel
 from dataloader.dataloader import ValPre
 from utils.transforms import pad_image_to_shape, normalize
-from timm.models.layers import to_2tuple
 
 logger = get_logger()
 
@@ -27,9 +27,16 @@ class SegEvaluator(Evaluator):
         label = data['label']
         modal_x = data['modal_x']
         name = data['fn']
+        start = time.perf_counter()
         pred = self.sliding_eval_rgbX(img, modal_x, config.eval_crop_size, config.eval_stride_rate, device)
+        elapsed = time.perf_counter() - start
         hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
-        results_dict = {'hist': hist_tmp, 'labeled': labeled_tmp, 'correct': correct_tmp}
+        results_dict = {
+            'hist': hist_tmp,
+            'labeled': labeled_tmp,
+            'correct': correct_tmp,
+            'elapsed': elapsed,
+        }
 
         if self.save_path is not None:
             ensure_dir(self.save_path)
@@ -55,18 +62,18 @@ class SegEvaluator(Evaluator):
 
     def compute_metric(self, results):
         hist = np.zeros((config.num_classes, config.num_classes))
-        correct = 0
-        labeled = 0
-        count = 0
+        total_time = 0.0
         for d in results:
             hist += d['hist']
-            correct += d['correct']
-            labeled += d['labeled']
-            count += 1
+            total_time += d.get('elapsed', 0.0)
 
-        iou, mean_IoU, _, freq_IoU, mean_pixel_acc, pixel_acc = compute_score(hist, correct, labeled)
-        result_line = print_iou(iou, freq_IoU, mean_pixel_acc, pixel_acc,
-                                dataset.class_names, show_no_back=False)
+        result_line = format_detailed_report(
+            hist,
+            dataset.class_names,
+            total_time=total_time,
+            num_images=len(results),
+        )
+        logger.info("\n" + result_line)
         return result_line
 
     def process_image_rgbX(self, img, modal_x, crop_size=None):
