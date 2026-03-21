@@ -199,6 +199,7 @@ with Engine(custom_parser=parser) as engine:
     logger.info('begin training:')
 
     best_miou = 0.0
+    best_epoch = 0
 
     for epoch in range(engine.state.epoch, config.nepochs + 1):
         if engine.distributed:
@@ -303,10 +304,20 @@ with Engine(custom_parser=parser) as engine:
 
                 # Save best checkpoint
                 if mean_IoU > best_miou:
+                    previous_best_epoch = best_epoch
                     best_miou = mean_IoU
+                    best_epoch = epoch
                     best_path = osp.join(config.checkpoint_dir, 'epoch-best.pth')
+                    best_epoch_path = osp.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth')
                     last_path = osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
                     if osp.exists(last_path):
+                        if previous_best_epoch > 0:
+                            previous_best_path = osp.join(
+                                config.checkpoint_dir, f'epoch-{previous_best_epoch}-best.pth'
+                            )
+                            if osp.exists(previous_best_path):
+                                os.remove(previous_best_path)
+                        shutil.copy(last_path, best_epoch_path)
                         shutil.copy(last_path, best_path)
                     logger.info(f'New best mIoU: {best_miou:.4f} at epoch {epoch}')
 
