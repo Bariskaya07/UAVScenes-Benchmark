@@ -160,7 +160,12 @@ class UAVScenesDataset(data.Dataset):
                     f'{timestamp}.png'
                 )
 
-                if os.path.exists(label_path) and os.path.exists(hag_path):
+                if (
+                    os.path.exists(label_path)
+                    and os.path.exists(hag_path)
+                    and os.path.getsize(label_path) > 0
+                    and os.path.getsize(hag_path) > 0
+                ):
                     samples.append({
                         'rgb': os.path.join(rgb_dir, rgb_file),
                         'label': label_path,
@@ -220,6 +225,8 @@ class UAVScenesDataset(data.Dataset):
         Output: [H, W, 3] float32 array with values in [0, 1]
         """
         hag_raw = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)  # uint16
+        if hag_raw is None:
+            raise FileNotFoundError(f"HAG file could not be loaded: {filepath}")
         hag_meters = (hag_raw.astype(np.float32) - 20000) / 1000.0
         hag_normalized = np.clip(hag_meters / 50.0, 0, 1)
         # Stack to 3 channels for backbone compatibility

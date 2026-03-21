@@ -14,6 +14,11 @@ import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
 from torch.cuda.amp import GradScaler, autocast
+try:
+    from fvcore.nn import FlopCountAnalysis
+    FVCORE_AVAILABLE = True
+except ImportError:
+    FVCORE_AVAILABLE = False
 
 from config import config
 from dataloader.dataloader import get_train_loader, ValPre
@@ -116,6 +121,28 @@ def apply_freeze_bn_if_needed(net):
             module.eval()
 
 
+def log_model_complexity(model, device):
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f'Parameters: {total_params / 1e6:.2f}M total, {trainable_params / 1e6:.2f}M trainable')
+
+    if not FVCORE_AVAILABLE:
+        logger.info('GFLOPs: skipped (fvcore not installed)')
+        return
+
+    try:
+        model.eval()
+        dummy_rgb = torch.randn(1, 3, config.image_height, config.image_width, device=device)
+        dummy_hag = torch.randn(1, 3, config.image_height, config.image_width, device=device)
+        flops = FlopCountAnalysis(model, (dummy_rgb, dummy_hag)).total()
+        logger.info(f'GFLOPs: {flops / 1e9:.2f}')
+    except Exception as exc:
+        logger.warning(f'GFLOPs: skipped ({exc})')
+    finally:
+        model.train()
+        apply_freeze_bn_if_needed(model)
+
+
 with Engine(custom_parser=parser) as engine:
     args = parser.parse_args()
 
@@ -187,6 +214,12 @@ with Engine(custom_parser=parser) as engine:
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
+
+    is_main = (engine.distributed and engine.local_rank == 0) or (not engine.distributed)
+    if is_main:
+        complexity_model = model.module if engine.distributed else model
+        complexity_device = next(complexity_model.parameters()).device
+        log_model_complexity(complexity_model, complexity_device)
 
     engine.register_state(dataloader=train_loader, model=model,
                           optimizer=optimizer)
@@ -280,8 +313,6 @@ with Engine(custom_parser=parser) as engine:
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
 
         # Validation + best checkpoint using fast whole-image validation on val set
-        is_main = (engine.distributed and engine.local_rank == 0) or (not engine.distributed)
-
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if is_main:
                 engine.save_and_link_checkpoint(config.checkpoint_dir,
