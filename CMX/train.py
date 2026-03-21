@@ -132,13 +132,23 @@ def log_model_complexity(model, device):
 
     try:
         model.eval()
-        dummy_rgb = torch.randn(1, 3, config.image_height, config.image_width, device=device)
-        dummy_hag = torch.randn(1, 3, config.image_height, config.image_width, device=device)
-        flops = FlopCountAnalysis(model, (dummy_rgb, dummy_hag)).total()
+        with torch.no_grad():
+            dummy_rgb = torch.randn(1, 3, config.image_height, config.image_width, device=device)
+            dummy_hag = torch.randn(1, 3, config.image_height, config.image_width, device=device)
+            analysis = FlopCountAnalysis(model, (dummy_rgb, dummy_hag))
+            flops = analysis.total()
         logger.info(f'GFLOPs: {flops / 1e9:.2f}')
     except Exception as exc:
         logger.warning(f'GFLOPs: skipped ({exc})')
     finally:
+        if 'analysis' in locals():
+            del analysis
+        if 'dummy_rgb' in locals():
+            del dummy_rgb
+        if 'dummy_hag' in locals():
+            del dummy_hag
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         model.train()
         apply_freeze_bn_if_needed(model)
 
@@ -226,7 +236,7 @@ with Engine(custom_parser=parser) as engine:
     if engine.continue_state_object:
         engine.restore_checkpoint()
 
-    optimizer.zero_grad()
+    optimizer.zero_grad(set_to_none=True)
     model.train()
     apply_freeze_bn_if_needed(model)
     logger.info('begin training:')
@@ -269,7 +279,8 @@ with Engine(custom_parser=parser) as engine:
             # NaN/Inf loss guard (matching CMNeXt train_mm.py)
             if torch.isnan(loss) or torch.isinf(loss):
                 logger.warning(f'NaN/Inf loss at epoch {epoch} iter {idx}, skipping...')
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
+                del loss, imgs, gts, modal_xs, minibatch
                 torch.cuda.empty_cache()
                 continue
 
@@ -277,7 +288,7 @@ with Engine(custom_parser=parser) as engine:
             if engine.distributed:
                 reduce_loss = all_reduce_tensor(loss, world_size=engine.world_size)
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
 
             # Gradient clipping (matching CMNeXt: max_norm=1.0)
@@ -285,8 +296,11 @@ with Engine(custom_parser=parser) as engine:
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             if torch.isnan(grad_norm) or torch.isinf(grad_norm):
                 logger.warning(f'NaN/Inf gradient at epoch {epoch} iter {idx}, skipping step...')
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 scaler.update()
+                if engine.distributed:
+                    del reduce_loss
+                del grad_norm, loss, imgs, gts, modal_xs, minibatch
                 torch.cuda.empty_cache()
                 continue
 
@@ -306,7 +320,9 @@ with Engine(custom_parser=parser) as engine:
                         + ' lr=%.4e' % lr \
                         + ' loss=%.4f total_loss=%.4f' % (loss.item(), (sum_loss / (idx + 1)))
 
-            del loss
+            if engine.distributed:
+                del reduce_loss
+            del grad_norm, loss, imgs, gts, modal_xs, minibatch
             pbar.set_description(print_str, refresh=False)
 
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
