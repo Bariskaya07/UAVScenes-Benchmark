@@ -271,6 +271,14 @@ with Engine(custom_parser=parser) as engine:
             imgs = imgs.cuda(non_blocking=True)
             gts = gts.cuda(non_blocking=True)
             modal_xs = modal_xs.cuda(non_blocking=True)
+            valid_pixels = int((gts != config.background).sum().item())
+
+            if valid_pixels == 0:
+                logger.warning(f'All-ignore batch at epoch {epoch} iter {idx}, skipping...')
+                optimizer.zero_grad(set_to_none=True)
+                del imgs, gts, modal_xs, minibatch
+                torch.cuda.empty_cache()
+                continue
 
             # AMP forward pass (matching CMNeXt)
             with autocast():
@@ -278,7 +286,12 @@ with Engine(custom_parser=parser) as engine:
 
             # NaN/Inf loss guard (matching CMNeXt train_mm.py)
             if torch.isnan(loss) or torch.isinf(loss):
-                logger.warning(f'NaN/Inf loss at epoch {epoch} iter {idx}, skipping...')
+                rgb_finite = bool(torch.isfinite(imgs).all().item())
+                modal_finite = bool(torch.isfinite(modal_xs).all().item())
+                logger.warning(
+                    f'NaN/Inf loss at epoch {epoch} iter {idx}, skipping... '
+                    f'(valid_pixels={valid_pixels}, rgb_finite={rgb_finite}, modal_finite={modal_finite})'
+                )
                 optimizer.zero_grad(set_to_none=True)
                 del loss, imgs, gts, modal_xs, minibatch
                 torch.cuda.empty_cache()
@@ -295,7 +308,10 @@ with Engine(custom_parser=parser) as engine:
             scaler.unscale_(optimizer)
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             if torch.isnan(grad_norm) or torch.isinf(grad_norm):
-                logger.warning(f'NaN/Inf gradient at epoch {epoch} iter {idx}, skipping step...')
+                logger.warning(
+                    f'NaN/Inf gradient at epoch {epoch} iter {idx}, skipping step... '
+                    f'(valid_pixels={valid_pixels})'
+                )
                 optimizer.zero_grad(set_to_none=True)
                 scaler.update()
                 if engine.distributed:
