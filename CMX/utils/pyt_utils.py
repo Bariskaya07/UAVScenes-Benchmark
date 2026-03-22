@@ -170,11 +170,23 @@ def load_model(model, model_file, is_restore=False):
         state_dict = model_file
     t_ioend = time.time()
 
-    if is_restore:
+    model_keys = set(model.state_dict().keys())
+    state_keys = set(state_dict.keys())
+
+    model_has_module = all(k.startswith('module.') for k in model_keys) if model_keys else False
+    state_has_module = all(k.startswith('module.') for k in state_keys) if state_keys else False
+
+    # Checkpoints are saved without the DistributedDataParallel "module." prefix.
+    # When restoring, align prefixes to the current model instead of assuming DDP.
+    if is_restore and model_has_module and not state_has_module:
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
-            name = 'module.' + k
-            new_state_dict[name] = v
+            new_state_dict['module.' + k] = v
+        state_dict = new_state_dict
+    elif not model_has_module and state_has_module:
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            new_state_dict[k[7:] if k.startswith('module.') else k] = v
         state_dict = new_state_dict
 
     model.load_state_dict(state_dict, strict=True)
