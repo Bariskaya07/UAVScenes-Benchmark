@@ -13,7 +13,6 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
-from torch.cuda.amp import GradScaler, autocast
 try:
     from fvcore.nn import FlopCountAnalysis
     FVCORE_AVAILABLE = True
@@ -38,6 +37,13 @@ parser = argparse.ArgumentParser()
 logger = get_logger()
 
 os.environ['MASTER_PORT'] = '169710'
+
+
+def get_amp_dtype():
+    amp_dtype = str(getattr(config, 'amp_dtype', 'fp16')).lower()
+    if amp_dtype == 'bf16':
+        return torch.bfloat16
+    return torch.float16
 
 
 def set_seed(seed):
@@ -212,8 +218,10 @@ with Engine(custom_parser=parser) as engine:
     warmup_iters = niters_per_epoch * config.warm_up_epoch
     lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, warmup_iters, warmup_ratio=0.1)
 
-    # AMP (matching CMNeXt)
-    scaler = GradScaler()
+    # AMP precision is configurable to allow bf16 on A100 while keeping mixed precision.
+    amp_dtype = get_amp_dtype()
+    use_grad_scaler = torch.cuda.is_available() and amp_dtype == torch.float16
+    scaler = torch.amp.GradScaler('cuda', enabled=use_grad_scaler)
 
     if engine.distributed:
         logger.info('.............distributed training.............')
@@ -280,8 +288,8 @@ with Engine(custom_parser=parser) as engine:
                 torch.cuda.empty_cache()
                 continue
 
-            # AMP forward pass (matching CMNeXt)
-            with autocast():
+            # AMP forward pass with configurable precision (fp16 or bf16)
+            with torch.amp.autocast('cuda', enabled=torch.cuda.is_available(), dtype=amp_dtype):
                 loss = model(imgs, modal_xs, gts)
 
             # NaN/Inf loss guard (matching CMNeXt train_mm.py)
@@ -302,10 +310,13 @@ with Engine(custom_parser=parser) as engine:
                 reduce_loss = all_reduce_tensor(loss, world_size=engine.world_size)
 
             optimizer.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
+            if scaler.is_enabled():
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+            else:
+                loss.backward()
 
             # Gradient clipping (matching CMNeXt: max_norm=1.0)
-            scaler.unscale_(optimizer)
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             if torch.isnan(grad_norm) or torch.isinf(grad_norm):
                 logger.warning(
@@ -313,15 +324,19 @@ with Engine(custom_parser=parser) as engine:
                     f'(valid_pixels={valid_pixels})'
                 )
                 optimizer.zero_grad(set_to_none=True)
-                scaler.update()
+                if scaler.is_enabled():
+                    scaler.update()
                 if engine.distributed:
                     del reduce_loss
                 del grad_norm, loss, imgs, gts, modal_xs, minibatch
                 torch.cuda.empty_cache()
                 continue
 
-            scaler.step(optimizer)
-            scaler.update()
+            if scaler.is_enabled():
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
 
             if engine.distributed:
                 sum_loss += reduce_loss.item()
