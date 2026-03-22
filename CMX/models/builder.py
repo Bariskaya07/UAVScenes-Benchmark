@@ -83,8 +83,15 @@ class EncoderDecoder(nn.Module):
             self.decode_head = FCNHead(in_channels=self.channels[-1], kernel_size=3, num_classes=cfg.num_classes, norm_layer=norm_layer)
 
         self.criterion = criterion
+        self.amp_stable_fp32 = getattr(cfg, 'amp_stable_fp32', False)
+        self._configure_amp_stability()
         if self.criterion:
             self.init_weights(cfg, pretrained=cfg.pretrained_model)
+
+    def _configure_amp_stability(self):
+        for module in self.modules():
+            if hasattr(module, 'amp_stable_fp32'):
+                module.amp_stable_fp32 = self.amp_stable_fp32
     
     def init_weights(self, cfg, pretrained=None):
         if pretrained:
@@ -118,8 +125,8 @@ class EncoderDecoder(nn.Module):
         else:
             out = self.encode_decode(rgb, modal_x)
         if label is not None:
-            loss = self.criterion(out, label.long())
+            loss = self.criterion(out.float(), label.long())
             if self.aux_head:
-                loss += self.aux_rate * self.criterion(aux_fm, label.long())
+                loss += self.aux_rate * self.criterion(aux_fm.float(), label.long())
             return loss
         return out

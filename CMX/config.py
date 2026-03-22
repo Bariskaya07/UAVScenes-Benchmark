@@ -71,6 +71,7 @@ C.use_gaussian_blur = True
 C.gaussian_blur_prob = 0.2
 C.gaussian_blur_kernel = 3
 C.freeze_bn = True
+C.amp_stable_fp32 = True  # Set False to fully revert to previous AMP/autocast-only behavior
 
 C.fix_bias = True
 C.bn_eps = 1e-3

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast
 
 from timm.models.layers import trunc_normal_
 import math
@@ -53,6 +54,7 @@ class FeatureRectifyModule(nn.Module):
         self.lambda_s = lambda_s
         self.channel_weights = ChannelWeights(dim=dim, reduction=reduction)
         self.spatial_weights = SpatialWeights(dim=dim, reduction=reduction)
+        self.amp_stable_fp32 = False
     
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -70,6 +72,17 @@ class FeatureRectifyModule(nn.Module):
                 m.bias.data.zero_()
     
     def forward(self, x1, x2):
+        if self.amp_stable_fp32 and torch.is_autocast_enabled():
+            out_dtype = x1.dtype
+            with autocast(enabled=False):
+                x1_fp32 = x1.float()
+                x2_fp32 = x2.float()
+                channel_weights = self.channel_weights(x1_fp32, x2_fp32)
+                spatial_weights = self.spatial_weights(x1_fp32, x2_fp32)
+                out_x1 = x1_fp32 + self.lambda_c * channel_weights[1] * x2_fp32 + self.lambda_s * spatial_weights[1] * x2_fp32
+                out_x2 = x2_fp32 + self.lambda_c * channel_weights[0] * x1_fp32 + self.lambda_s * spatial_weights[0] * x1_fp32
+            return out_x1.to(out_dtype), out_x2.to(out_dtype)
+
         channel_weights = self.channel_weights(x1, x2)
         spatial_weights = self.spatial_weights(x1, x2)
         out_x1 = x1 + self.lambda_c * channel_weights[1] * x2 + self.lambda_s * spatial_weights[1] * x2
@@ -89,8 +102,29 @@ class CrossAttention(nn.Module):
         self.scale = qk_scale or head_dim ** -0.5
         self.kv1 = nn.Linear(dim, dim * 2, bias=qkv_bias)
         self.kv2 = nn.Linear(dim, dim * 2, bias=qkv_bias)
+        self.amp_stable_fp32 = False
 
     def forward(self, x1, x2):
+        if self.amp_stable_fp32 and torch.is_autocast_enabled():
+            out_dtype = x1.dtype
+            with autocast(enabled=False):
+                x1_fp32 = x1.float()
+                x2_fp32 = x2.float()
+                B, N, C = x1_fp32.shape
+                q1 = x1_fp32.reshape(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3).contiguous()
+                q2 = x2_fp32.reshape(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3).contiguous()
+                k1, v1 = self.kv1(x1_fp32).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4).contiguous()
+                k2, v2 = self.kv2(x2_fp32).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4).contiguous()
+
+                ctx1 = (k1.transpose(-2, -1) @ v1) * self.scale
+                ctx1 = ctx1.softmax(dim=-2)
+                ctx2 = (k2.transpose(-2, -1) @ v2) * self.scale
+                ctx2 = ctx2.softmax(dim=-2)
+
+                x1_out = (q1 @ ctx2).permute(0, 2, 1, 3).reshape(B, N, C).contiguous()
+                x2_out = (q2 @ ctx1).permute(0, 2, 1, 3).reshape(B, N, C).contiguous()
+            return x1_out.to(out_dtype), x2_out.to(out_dtype)
+
         B, N, C = x1.shape
         q1 = x1.reshape(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3).contiguous()
         q2 = x2.reshape(B, -1, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3).contiguous()
@@ -161,6 +195,7 @@ class FeatureFusionModule(nn.Module):
         super().__init__()
         self.cross = CrossPath(dim=dim, reduction=reduction, num_heads=num_heads)
         self.channel_emb = ChannelEmbed(in_channels=dim*2, out_channels=dim, reduction=reduction, norm_layer=norm_layer)
+        self.amp_stable_fp32 = False
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -179,6 +214,19 @@ class FeatureFusionModule(nn.Module):
                 m.bias.data.zero_()
 
     def forward(self, x1, x2):
+        if self.amp_stable_fp32 and torch.is_autocast_enabled():
+            out_dtype = x1.dtype
+            with autocast(enabled=False):
+                x1_fp32 = x1.float()
+                x2_fp32 = x2.float()
+                B, C, H, W = x1_fp32.shape
+                x1_fp32 = x1_fp32.flatten(2).transpose(1, 2)
+                x2_fp32 = x2_fp32.flatten(2).transpose(1, 2)
+                x1_fp32, x2_fp32 = self.cross(x1_fp32, x2_fp32)
+                merge = torch.cat((x1_fp32, x2_fp32), dim=-1)
+                merge = self.channel_emb(merge, H, W)
+            return merge.to(out_dtype)
+
         B, C, H, W = x1.shape
         x1 = x1.flatten(2).transpose(1, 2)
         x2 = x2.flatten(2).transpose(1, 2)

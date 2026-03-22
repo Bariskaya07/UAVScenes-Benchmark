@@ -4,6 +4,7 @@ import torch
 
 from torch.nn.modules import module
 import torch.nn.functional as F
+from torch.cuda.amp import autocast
 
 class MLP(nn.Module):
     """
@@ -55,8 +56,31 @@ class DecoderHead(nn.Module):
                             )
                             
         self.linear_pred = nn.Conv2d(embedding_dim, self.num_classes, kernel_size=1)
+        self.amp_stable_fp32 = False
        
     def forward(self, inputs):
+        if self.amp_stable_fp32 and torch.is_autocast_enabled():
+            out_dtype = inputs[0].dtype
+            with autocast(enabled=False):
+                c1, c2, c3, c4 = [x.float() for x in inputs]
+                n, _, h, w = c4.shape
+
+                _c4 = self.linear_c4(c4).permute(0,2,1).reshape(n, -1, c4.shape[2], c4.shape[3])
+                _c4 = F.interpolate(_c4, size=c1.size()[2:],mode='bilinear',align_corners=self.align_corners)
+
+                _c3 = self.linear_c3(c3).permute(0,2,1).reshape(n, -1, c3.shape[2], c3.shape[3])
+                _c3 = F.interpolate(_c3, size=c1.size()[2:],mode='bilinear',align_corners=self.align_corners)
+
+                _c2 = self.linear_c2(c2).permute(0,2,1).reshape(n, -1, c2.shape[2], c2.shape[3])
+                _c2 = F.interpolate(_c2, size=c1.size()[2:],mode='bilinear',align_corners=self.align_corners)
+
+                _c1 = self.linear_c1(c1).permute(0,2,1).reshape(n, -1, c1.shape[2], c1.shape[3])
+
+                _c = self.linear_fuse(torch.cat([_c4, _c3, _c2, _c1], dim=1))
+                x = self.dropout(_c)
+                x = self.linear_pred(x)
+            return x.to(out_dtype)
+
         # len=4, 1/4,1/8,1/16,1/32
         c1, c2, c3, c4 = inputs
         
