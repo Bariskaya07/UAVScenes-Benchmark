@@ -243,11 +243,13 @@ with Engine(custom_parser=parser) as engine:
     if engine.continue_state_object:
         engine.restore_checkpoint()
 
-    scaler = GradScaler(init_scale=256)
+    use_amp = bool(getattr(config, 'amp', True))
+    scaler = GradScaler(init_scale=256, enabled=use_amp)
     optimizer.zero_grad()
     model.train()
     apply_freeze_bn_if_needed(model)
     logger.info('begin trainning:')
+    logger.info(f'AMP: {use_amp}')
     
     # Initialize the evaluation dataset and evaluator
     val_setting = {'rgb_root': config.rgb_root_folder,
@@ -298,7 +300,7 @@ with Engine(custom_parser=parser) as engine:
             gts = gts.cuda(non_blocking=True)
             modal_xs = modal_xs.cuda(non_blocking=True)
 
-            with autocast():
+            with autocast(enabled=use_amp):
                 loss = model(imgs, modal_xs, gts)
 
             if engine.distributed:

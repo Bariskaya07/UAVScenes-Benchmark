@@ -47,7 +47,7 @@ TRAIN:
   EPOCHS        : 60              # Training epochs
   EVAL_START    : 5               # Start evaluation at epoch 5 (match benchmark)
   EVAL_INTERVAL : 5               # Evaluate every 5 epochs
-  AMP           : true            # Mixed precision for memory efficiency
+  AMP           : false           # Keep Mul-VMamba training in FP32 for UAVScenes
   DDP           : false           # Single GPU mode
   FREEZE_BN     : true            # Match benchmark training policy
 
