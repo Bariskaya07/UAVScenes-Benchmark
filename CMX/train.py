@@ -40,7 +40,7 @@ os.environ['MASTER_PORT'] = '169710'
 
 
 def get_amp_dtype():
-    amp_dtype = str(getattr(config, 'amp_dtype', 'fp16')).lower()
+    amp_dtype = str(getattr(config, 'amp_dtype', 'bf16')).lower()
     if amp_dtype == 'bf16':
         return torch.bfloat16
     return torch.float16
