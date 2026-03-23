@@ -44,7 +44,7 @@ DATASET:
 TRAIN:
   IMAGE_SIZE    : [768, 768]      # Training size (fair comparison with CMNeXt/DFormerV2)
   BATCH_SIZE    : 8               # Same as CMNeXt/DFormerV2
-  EPOCHS        : 60              # Training epochs
+  EPOCHS        : 30              # Training epochs
   EVAL_START    : 5               # Start evaluation at epoch 5 (match benchmark)
   EVAL_INTERVAL : 5               # Evaluate every 5 epochs
   AMP           : false           # Keep Mul-VMamba training in FP32 for UAVScenes
@@ -72,9 +72,9 @@ OPTIMIZER:
 # -------------------------------------------------------------------------
 SCHEDULER:
   NAME          : warmuppolylr
-  MAX_EPOCHS    : 60
+  MAX_EPOCHS    : 30
   POWER         : 0.9             # PolyLR power (CMNeXt paper setting)
-  WARMUP        : 3               # Warmup epochs
+  WARMUP        : 2               # Warmup epochs (2 warmup + 28 decay)
   WARMUP_RATIO  : 0.1             # CMNeXt paper setting
 
 # -------------------------------------------------------------------------

@@ -57,7 +57,7 @@ TRAIN:
     - 768                    # Reduced from 1024 for memory efficiency
   BATCH_SIZE: 8              # Direct batch=8 (PPX reduces VRAM)
   GRAD_ACCUM: 1              # No accumulation - testing real VRAM usage
-  EPOCHS: 60                 # Training epochs
+  EPOCHS: 30                 # Training epochs
   EVAL_START: 5              # Start evaluation after epoch 5
   EVAL_INTERVAL: 5           # Evaluate every 5 epochs
   AMP: true                  # Mixed Precision for memory efficiency
@@ -68,7 +68,7 @@ TRAIN:
 
   # Early Stopping - Disabled because whole mode validation underestimates small objects
   EARLY_STOP:
-    ENABLE: false            # Disabled - let training run full 60 epochs
+    ENABLE: false            # Disabled - let training run full 30 epochs
     PATIENCE: 3              # 3 evaluations = 15 epochs (3×5)
     MIN_DELTA: 0.001         # Minimum improvement threshold (0.1% mIoU)
     METRIC: 'mIoU'           # Metric to monitor
@@ -93,9 +93,9 @@ OPTIMIZER:
 
 SCHEDULER:
   NAME: WarmupPolyLR
-  MAX_EPOCHS: 60
+  MAX_EPOCHS: 30
   POWER: 0.9                 # Original CMNeXt paper setting
-  WARMUP: 3                  # Warmup epochs (5% of total)
+  WARMUP: 2                  # Warmup epochs (2 warmup + 28 decay)
   WARMUP_RATIO: 0.1          # Original CMNeXt paper setting
 
 # -------------------------------------------------------------------------

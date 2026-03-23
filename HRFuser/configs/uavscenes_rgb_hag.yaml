@@ -38,7 +38,7 @@ training:
   num_workers: 8
 
   # Training schedule
-  epochs: 60
+  epochs: 30
 
   # Validation frequency
   val_every: 5
@@ -70,7 +70,7 @@ scheduler:
   type: PolyLR
   power: 0.9
   warmup_type: linear
-  warmup_epochs: 3
+  warmup_epochs: 2
   warmup_ratio: 0.1
 
   # Layer-wise learning rate multiplier
@@ -129,5 +129,5 @@ logging:
 # - Same train/val/test scene split (13/3/4 scenes)
 # - Same 19 class label mapping
 # - Sliding window evaluation 768x768 stride 512
-# - AdamW lr=6e-5, PolyLR power=0.9, warmup 3 epochs
-# - 60 epochs, seed=42
+# - AdamW lr=6e-5, PolyLR power=0.9, warmup 2 epochs
+# - 30 epochs, seed=42

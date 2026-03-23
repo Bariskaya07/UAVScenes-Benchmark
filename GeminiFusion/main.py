@@ -248,8 +248,14 @@ def get_arguments():
         "--num-epoch",
         type=int,
         nargs="+",
-        default=[20, 20, 20],  # 60 total epochs (fair comparison with CMNeXt)
+        default=[10, 10, 10],  # 30 total epochs
         help="Number of epochs per training stage",
+    )
+    parser.add_argument(
+        "--warmup-epochs",
+        type=int,
+        default=2,
+        help="Warmup epochs for the shared polynomial LR schedule",
     )
     parser.add_argument(
         "--random-seed",
@@ -1228,7 +1234,7 @@ def main():
     )
 
     # Single continuous LR schedule (TokenFusion/CMNeXt-style):
-    # warmup for first 3 epochs, then polynomial decay to epoch 60.
+    # warmup for first 2 epochs, then polynomial decay to epoch 30.
     base_lr = args.lr_0
     total_epochs = sum(args.num_epoch)
 
@@ -1251,7 +1257,7 @@ def main():
 
     # Calculate warmup/max_iter using real iterations per epoch
     iters_per_epoch = len(train_loader)
-    warmup_epochs = getattr(args, "warmup_epochs", 3)
+    warmup_epochs = getattr(args, "warmup_epochs", 2)
     warmup_iter = warmup_epochs * iters_per_epoch
     max_iter = total_epochs * iters_per_epoch
     power = getattr(args, "power", 0.9)

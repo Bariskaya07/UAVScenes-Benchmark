@@ -40,14 +40,14 @@ optimizer:
 
 # Scheduler (Fair comparison with CMNeXt)
 scheduler:
-  max_epochs: 60
-  warmup_epochs: 3     # ~5% of total epochs
+  max_epochs: 30
+  warmup_epochs: 2     # 2 warmup epochs + 28 decay epochs
   warmup_ratio: 0.1    # CMNeXt paper setting
   power: 0.9           # CMNeXt paper setting
 
 # Training schedule
 num_stages: 3
-epochs_per_stage: 20
+epochs_per_stage: 10
 val_every: 5
 
 # HAG (Height Above Ground)

@@ -114,7 +114,7 @@ C.momentum = 0.9
 C.weight_decay = 0.01
 C.warmup_ratio = 0.1  # Initial LR = LR * warmup_ratio (CMNeXt paper setting)
 C.batch_size = 8      # Global batch size (engine divides by num_gpus → per-GPU=2 with 4 GPUs)
-C.nepochs = 60        # Training epochs
+C.nepochs = 30        # Training epochs
 C.niters_per_epoch = None  # Determined at runtime: len(train_loader)
 C.num_workers = 8
 C.amp = False         # Keep Sigma training in FP32 for UAVScenes
@@ -126,7 +126,7 @@ C.use_gaussian_blur = True  # Gaussian blur enabled
 C.gaussian_blur_prob = 0.2  # Match benchmark CMNeXt
 C.gaussian_blur_kernel = 3  # Match benchmark CMNeXt
 C.freeze_bn = True          # Match benchmark training policy (Gemini/Token/CMNeXt/HRFuser)
-C.warm_up_epoch = 3   # Warmup epochs (5% of total)
+C.warm_up_epoch = 2   # 2 warmup epochs + 28 decay epochs
 
 C.fix_bias = True
 C.bn_eps = 1e-3
