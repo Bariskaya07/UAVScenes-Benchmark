@@ -49,6 +49,7 @@ training:
 
   # Mixed precision training
   amp: true
+  amp_dtype: bf16
 
   # Freeze batch norm
   freeze_bn: true

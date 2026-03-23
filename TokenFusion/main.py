@@ -23,7 +23,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
 
 try:
     from fvcore.nn import FlopCountAnalysis
@@ -52,6 +51,21 @@ class Config:
                 setattr(self, key, Config(value))
             else:
                 setattr(self, key, value)
+
+
+def resolve_amp_dtype(dtype_name):
+    """Map config AMP dtype string to torch dtype."""
+    dtype_name = str(dtype_name).lower()
+    if dtype_name == 'bf16':
+        return torch.bfloat16
+    if dtype_name == 'fp16':
+        return torch.float16
+    raise ValueError(f"Unsupported training.amp_dtype='{dtype_name}'. Expected 'bf16' or 'fp16'.")
+
+
+def get_amp_dtype(cfg):
+    """Return configured AMP autocast dtype."""
+    return resolve_amp_dtype(getattr(cfg.training, 'amp_dtype', 'bf16'))
 
 
 def parse_args():
@@ -258,6 +272,8 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
     l1_loss_meter = AverageMeter()
     batch_time = AverageMeter()
     data_time = AverageMeter()
+    amp_enabled = cfg.training.amp
+    amp_dtype = get_amp_dtype(cfg)
 
     end = time.time()
     num_iters = len(train_loader)
@@ -271,7 +287,7 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
         label = sample['label'].to(device)
 
         # Forward pass with AMP
-        with autocast(enabled=cfg.training.amp):
+        with torch.amp.autocast('cuda', enabled=amp_enabled, dtype=amp_dtype):
             outputs, masks = model([rgb, hag])
             loss, seg_loss, l1_loss = compute_loss(
                 outputs, label, masks,
@@ -281,7 +297,7 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
 
         # Backward pass
         optimizer.zero_grad()
-        if cfg.training.amp:
+        if amp_enabled:
             scaler.scale(loss).backward()
             scaler.step(optimizer.optimizer)
             scaler.update()
@@ -392,6 +408,7 @@ def main():
     logger.info(f"Image size: {cfg.training.image_size}")
     logger.info(f"Batch size: {cfg.training.batch_size}")
     logger.info(f"Epochs: {cfg.training.epochs}")
+    logger.info(f"AMP: {cfg.training.amp} (dtype={getattr(cfg.training, 'amp_dtype', 'bf16')})")
 
     # Set seed
     set_seed(cfg.training.seed)
@@ -444,7 +461,8 @@ def main():
     )
 
     # AMP scaler
-    scaler = GradScaler(enabled=cfg.training.amp)
+    amp_dtype = get_amp_dtype(cfg)
+    scaler = torch.amp.GradScaler('cuda', enabled=cfg.training.amp and amp_dtype == torch.float16)
 
     # Resume from checkpoint
     start_epoch = 0

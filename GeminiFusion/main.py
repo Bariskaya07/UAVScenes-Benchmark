@@ -29,7 +29,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
 
 from utils import *
 import utils.helpers as helpers
@@ -72,6 +71,16 @@ def _is_main_process() -> bool:
 
 def _format_gb(num_bytes: int) -> str:
     return f"{num_bytes / (1024 ** 3):.2f} GB"
+
+
+def resolve_amp_dtype(dtype_name: str):
+    """Map AMP dtype flag to torch dtype."""
+    dtype_name = str(dtype_name).lower()
+    if dtype_name == "bf16":
+        return torch.bfloat16
+    if dtype_name == "fp16":
+        return torch.float16
+    raise ValueError(f"Unsupported --amp-dtype '{dtype_name}'. Expected 'bf16' or 'fp16'.")
 
 
 def setup_ddp():
@@ -228,6 +237,13 @@ def get_arguments():
         help="Disable mixed precision training (force FP32)",
     )
     parser.set_defaults(amp=True)
+    parser.add_argument(
+        "--amp-dtype",
+        type=str,
+        default="bf16",
+        choices=["bf16", "fp16"],
+        help="AMP autocast dtype (default: bf16)",
+    )
     parser.add_argument(
         "--num-epoch",
         type=int,
@@ -546,6 +562,7 @@ def train(
     freeze_bn,
     print_loss=False,
     amp_enabled=True,
+    amp_dtype=torch.bfloat16,
     scaler=None,
     grad_clip: float = 0.0,
 ):
@@ -618,7 +635,7 @@ def train(
 
         # Forward pass
         try:
-            with autocast(enabled=amp_enabled):
+            with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
                 outputs, masks = segmenter(inputs)
         except RuntimeError as e:
             # If the very first forward OOMs, emit memory stats to help diagnosis.
@@ -730,7 +747,7 @@ def train(
 
 
 def sliding_window_inference(
-    segmenter, inputs, num_classes, window_size=768, stride=512, amp_enabled=True
+    segmenter, inputs, num_classes, window_size=768, stride=512, amp_enabled=True, amp_dtype=torch.bfloat16
 ):
     """Sliding window inference for full resolution images."""
     B, C, H, W = inputs[0].shape
@@ -758,7 +775,7 @@ def sliding_window_inference(
             crop_inputs = [x[:, :, h_start:h_end, w_start:w_end] for x in inputs]
 
             # Forward pass
-            with autocast(enabled=amp_enabled):
+            with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
                 outputs, _ = segmenter(crop_inputs)
             crop_output = outputs[-1]  # Use ensemble output
 
@@ -787,7 +804,7 @@ def sliding_window_inference(
 
 def validate(
     segmenter, input_types, val_loader, epoch, save_dir, num_classes=19, save_image=0,
-    eval_mode='whole', amp_enabled=True, progress_mode: str = "rank0"
+    eval_mode='whole', amp_enabled=True, amp_dtype=torch.bfloat16, progress_mode: str = "rank0"
 ):
     """Validate model.
 
@@ -852,12 +869,13 @@ def validate(
                     window_size=768,
                     stride=512,
                     amp_enabled=amp_enabled,
+                    amp_dtype=amp_dtype,
                 )
                 # For slide mode, we only get ensemble output
                 outputs_for_conf = [ensemble_output]
             else:
                 # Whole image inference (fast, uses resized input from dataloader)
-                with autocast(enabled=amp_enabled):
+                with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
                     outputs, _ = segmenter(inputs)
                 outputs_for_conf = outputs
 
@@ -1102,6 +1120,7 @@ def main():
     global args, best_miou
     best_miou = 0.0
     args = get_arguments()
+    amp_dtype = resolve_amp_dtype(args.amp_dtype)
 
     # Dataset configuration
     if args.dataset == "uavscenes":
@@ -1129,6 +1148,7 @@ def main():
     log_path = os.path.join(ckpt_dir, "log.txt") if _is_main_process() else os.devnull
     helpers.logger = open(log_path, "w+")
     print_log(" ".join(sys.argv))
+    print_log(f"AMP: {args.amp} (dtype={args.amp_dtype})")
 
     # Set random seeds
     torch.backends.cudnn.deterministic = True
@@ -1149,7 +1169,7 @@ def main():
     )
 
     # AMP scaler (enabled/disabled via args.amp)
-    scaler = GradScaler(enabled=args.amp)
+    scaler = torch.amp.GradScaler("cuda", enabled=args.amp and amp_dtype == torch.float16)
 
     total_params = compute_params(segmenter)
     trainable_params = sum(p.numel() for p in segmenter.parameters() if p.requires_grad)
@@ -1277,6 +1297,7 @@ def main():
                 num_classes=args.num_classes,
                 save_image=args.save_image,
                 amp_enabled=args.amp,
+                amp_dtype=amp_dtype,
                 progress_mode=args.val_progress,
             )
             if _is_main_process():
@@ -1305,6 +1326,7 @@ def main():
             args.freeze_bn,
             args.print_loss,
             amp_enabled=args.amp,
+            amp_dtype=amp_dtype,
             scaler=scaler,
             grad_clip=args.grad_clip,
         )
@@ -1318,6 +1340,7 @@ def main():
                 ckpt_dir,
                 args.num_classes,
                 amp_enabled=args.amp,
+                amp_dtype=amp_dtype,
                 progress_mode=args.val_progress,
             )
             next_epoch = epoch_current + 1
@@ -1398,6 +1421,7 @@ def main():
                 window_size=768,
                 stride=512,
                 amp_enabled=args.amp,
+                amp_dtype=amp_dtype,
             )
 
             torch.cuda.synchronize()

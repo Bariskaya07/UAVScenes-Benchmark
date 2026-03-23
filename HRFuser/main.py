@@ -73,6 +73,21 @@ class Config:
                 setattr(self, key, value)
 
 
+def resolve_amp_dtype(dtype_name):
+    """Map config AMP dtype string to torch dtype."""
+    dtype_name = str(dtype_name).lower()
+    if dtype_name == 'bf16':
+        return torch.bfloat16
+    if dtype_name == 'fp16':
+        return torch.float16
+    raise ValueError(f"Unsupported training.amp_dtype='{dtype_name}'. Expected 'bf16' or 'fp16'.")
+
+
+def get_amp_dtype(cfg):
+    """Return configured AMP autocast dtype."""
+    return resolve_amp_dtype(getattr(cfg.training, 'amp_dtype', 'bf16'))
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='HRFuser UAVScenes Training')
     parser.add_argument('--config', type=str, default='configs/uavscenes_rgb_hag.yaml',
@@ -457,6 +472,8 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
     loss_meter = AverageMeter()
     batch_time = AverageMeter()
     data_time = AverageMeter()
+    amp_enabled = cfg.training.amp
+    amp_dtype = get_amp_dtype(cfg)
 
     end = time.time()
     num_iters = len(train_loader)
@@ -469,7 +486,7 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
         target = sample['mask'].to(device).long()
 
         # Forward pass with AMP
-        with autocast('cuda', enabled=cfg.training.amp):
+        with autocast('cuda', enabled=amp_enabled, dtype=amp_dtype):
             output = model(rgb, hag)
 
             # Upsample to target size
@@ -480,7 +497,7 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
 
         # Backward pass
         optimizer.zero_grad()
-        if cfg.training.amp:
+        if amp_enabled:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -734,7 +751,7 @@ def main():
     logger.info(f"Global batch size: {cfg.training.batch_size}")
     logger.info(f"Epochs: {cfg.training.epochs}")
     logger.info(f"LR: {cfg.optimizer.lr}")
-    logger.info(f"AMP: {cfg.training.amp}")
+    logger.info(f"AMP: {cfg.training.amp} (dtype={getattr(cfg.training, 'amp_dtype', 'bf16')})")
 
     # Set seed (rank-shifted for DDP workers)
     set_seed(cfg.training.seed + rank)
@@ -783,7 +800,8 @@ def main():
     criterion = nn.CrossEntropyLoss(ignore_index=cfg.dataset.ignore_label).to(device)
 
     # AMP scaler
-    scaler = GradScaler('cuda', enabled=cfg.training.amp)
+    amp_dtype = get_amp_dtype(cfg)
+    scaler = GradScaler('cuda', enabled=cfg.training.amp and amp_dtype == torch.float16)
 
     # Resume from checkpoint
     start_epoch = 0

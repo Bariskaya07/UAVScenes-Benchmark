@@ -61,6 +61,7 @@ TRAIN:
   EVAL_START: 5              # Start evaluation after epoch 5
   EVAL_INTERVAL: 5           # Evaluate every 5 epochs
   AMP: true                  # Mixed Precision for memory efficiency
+  AMP_DTYPE: bf16            # autocast dtype: bf16 (default) or fp16
   DDP: false                 # Single GPU mode
   WORKERS: 8                 # Data loading workers
   FREEZE_BN: true            # Match GeminiFusion/HRFuser benchmark training policy

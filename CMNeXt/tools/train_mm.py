@@ -27,7 +27,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 
 try:
@@ -83,6 +82,21 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def resolve_amp_dtype(dtype_name):
+    """Map config AMP dtype string to torch dtype."""
+    dtype_name = str(dtype_name).lower()
+    if dtype_name == 'bf16':
+        return torch.bfloat16
+    if dtype_name == 'fp16':
+        return torch.float16
+    raise ValueError(f"Unsupported TRAIN.AMP_DTYPE='{dtype_name}'. Expected 'bf16' or 'fp16'.")
+
+
+def get_amp_dtype(cfg):
+    """Return configured AMP autocast dtype."""
+    return resolve_amp_dtype(cfg['TRAIN'].get('AMP_DTYPE', 'bf16'))
 
 
 def create_dataloader(cfg, split='train'):
@@ -153,6 +167,8 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
     num_batches = len(dataloader)
     log_interval = cfg.get('LOGGING', {}).get('LOG_INTERVAL', 50)
     accum_steps = cfg['TRAIN'].get('GRAD_ACCUM', 1)  # Gradient accumulation steps
+    amp_enabled = cfg['TRAIN'].get('AMP', True)
+    amp_dtype = get_amp_dtype(cfg)
 
     start_time = time.time()
     optimizer.zero_grad()  # Zero gradients at start
@@ -166,8 +182,8 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
         target = target.to(device)
 
         # Forward pass with AMP
-        if cfg['TRAIN'].get('AMP', True):
-            with autocast():
+        if amp_enabled:
+            with torch.amp.autocast('cuda', enabled=amp_enabled, dtype=amp_dtype):
                 logits = model(inputs)
                 loss = criterion(logits, target)
                 loss = loss / accum_steps  # Scale loss for accumulation
@@ -361,7 +377,11 @@ def sliding_window_inference(model, inputs, cfg):
                 crop_inputs = inputs[:, :, h_start:h_end, w_start:w_end]
 
             # Forward pass
-            with autocast():
+            with torch.amp.autocast(
+                'cuda',
+                enabled=cfg['TRAIN'].get('AMP', True),
+                dtype=get_amp_dtype(cfg),
+            ):
                 crop_logits = model(crop_inputs)
 
             # Resize if needed (shouldn't be necessary if crop matches model input)
@@ -485,7 +505,13 @@ def main():
     scheduler = get_scheduler(optimizer, cfg, len(train_loader))
 
     # AMP scaler
-    scaler = GradScaler() if cfg['TRAIN'].get('AMP', True) else None
+    amp_enabled = cfg['TRAIN'].get('AMP', True)
+    amp_dtype = get_amp_dtype(cfg)
+    scaler = (
+        torch.amp.GradScaler('cuda', enabled=amp_enabled and amp_dtype == torch.float16)
+        if amp_enabled else None
+    )
+    print(f"AMP: {amp_enabled} (dtype={cfg['TRAIN'].get('AMP_DTYPE', 'bf16')})")
 
     # Early stopping
     early_stop_cfg = cfg['TRAIN'].get('EARLY_STOP', {})
