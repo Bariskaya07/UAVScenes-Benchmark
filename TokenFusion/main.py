@@ -447,6 +447,20 @@ def main():
     # Calculate max iterations
     iters_per_epoch = len(train_loader)
     max_iter = cfg.training.epochs * iters_per_epoch
+    schedule_warmup_iters = cfg.optimizer.warmup_iter
+    schedule_warmup_epochs = schedule_warmup_iters / max(1, iters_per_epoch)
+    # Intentional: the UAVScenes config stores polynomial power under
+    # cfg.optimizer.power, and we pass that runtime value explicitly here.
+    schedule_power = cfg.optimizer.power
+    schedule_warmup_ratio = getattr(cfg.scheduler, 'warmup_ratio', 0.1)
+    logger.info(
+        "[LR] epochs=%d warmup_epochs=%.3f warmup_iters=%d power=%.3f warmup_ratio=%.3f warmup=linear",
+        cfg.training.epochs,
+        schedule_warmup_epochs,
+        schedule_warmup_iters,
+        schedule_power,
+        schedule_warmup_ratio,
+    )
 
     # Build optimizer
     optimizer = PolyWarmupAdamW(
@@ -454,10 +468,10 @@ def main():
         lr=cfg.optimizer.lr,
         weight_decay=cfg.optimizer.weight_decay,
         betas=tuple(cfg.optimizer.betas),
-        warmup_iter=cfg.optimizer.warmup_iter,
+        warmup_iter=schedule_warmup_iters,
         max_iter=max_iter,
-        warmup_ratio=getattr(cfg.scheduler, 'warmup_ratio', 0.1),
-        power=cfg.optimizer.power
+        warmup_ratio=schedule_warmup_ratio,
+        power=schedule_power
     )
 
     # AMP scaler

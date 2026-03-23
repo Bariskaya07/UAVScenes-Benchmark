@@ -80,13 +80,26 @@ def main(cfg, gpu, save_dir):
     loss_fn = get_loss(loss_cfg['NAME'], trainset.ignore_label, None)
     start_epoch = 0
     optimizer = get_optimizer(model, optim_cfg['NAME'], lr, optim_cfg['WEIGHT_DECAY'])
+    total_iters = int(epochs * iters_per_epoch)
+    schedule_power = sched_cfg['POWER']
+    schedule_warmup_epochs = sched_cfg['WARMUP']
+    schedule_warmup_iters = iters_per_epoch * schedule_warmup_epochs
+    schedule_warmup_ratio = sched_cfg['WARMUP_RATIO']
+    logger.info(
+        "[LR] epochs=%d warmup_epochs=%d warmup_iters=%d power=%.3f warmup_ratio=%.3f warmup=linear",
+        epochs,
+        schedule_warmup_epochs,
+        schedule_warmup_iters,
+        schedule_power,
+        schedule_warmup_ratio,
+    )
     scheduler = get_scheduler(
-        sched_cfg['NAME'],
-        optimizer,
-        int(epochs * iters_per_epoch),
-        sched_cfg['POWER'],
-        iters_per_epoch * sched_cfg['WARMUP'],
-        sched_cfg['WARMUP_RATIO']
+        scheduler_name=sched_cfg['NAME'],
+        optimizer=optimizer,
+        max_iter=total_iters,
+        power=schedule_power,
+        warmup_iter=schedule_warmup_iters,
+        warmup_ratio=schedule_warmup_ratio,
     )
 
     def apply_freeze_bn_if_needed(net):

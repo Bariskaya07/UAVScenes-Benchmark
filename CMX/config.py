@@ -66,6 +66,7 @@ C.niters_per_epoch = None  # Determined at runtime: len(train_loader)
 C.num_workers = 8
 C.train_scale_array = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
 C.warm_up_epoch = 2  # 2 warmup epochs + 28 decay epochs (30 total)
+C.warmup_ratio = 0.1  # Linear warmup starts at lr * 0.1
 C.use_photometric = True
 C.use_gaussian_blur = True
 C.gaussian_blur_prob = 0.2

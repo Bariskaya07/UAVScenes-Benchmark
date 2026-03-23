@@ -1266,7 +1266,7 @@ def main():
         print_log(
             f"[LR] iters_per_epoch={iters_per_epoch} warmup_epochs={warmup_epochs} "
             f"warmup_iter={warmup_iter} total_epochs={total_epochs} max_iter={max_iter} "
-            f"warmup_ratio={warmup_ratio} power={power} base_lr={base_lr:.2e}"
+            f"warmup_ratio={warmup_ratio} power={power} warmup=linear base_lr={base_lr:.2e}"
         )
 
     optimizer = PolyWarmupAdamW(

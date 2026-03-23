@@ -213,10 +213,28 @@ with Engine(custom_parser=parser) as engine:
     else:
         raise NotImplementedError
 
-    # Fix 1+2: LR policy with real dataset length and warmup_ratio=0.1
+    # Make the effective LR schedule explicit at the call site so readers do not
+    # mistake scheduler class defaults for UAVScenes runtime values.
     total_iteration = config.nepochs * niters_per_epoch
-    warmup_iters = niters_per_epoch * config.warm_up_epoch
-    lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, warmup_iters, warmup_ratio=0.1)
+    schedule_power = config.lr_power
+    schedule_warmup_epochs = config.warm_up_epoch
+    schedule_warmup_iters = niters_per_epoch * schedule_warmup_epochs
+    schedule_warmup_ratio = config.warmup_ratio
+    logger.info(
+        "[LR] epochs=%d warmup_epochs=%d warmup_iters=%d power=%.3f warmup_ratio=%.3f warmup=linear",
+        config.nepochs,
+        schedule_warmup_epochs,
+        schedule_warmup_iters,
+        schedule_power,
+        schedule_warmup_ratio,
+    )
+    lr_policy = WarmUpPolyLR(
+        start_lr=base_lr,
+        lr_power=schedule_power,
+        total_iters=total_iteration,
+        warmup_steps=schedule_warmup_iters,
+        warmup_ratio=schedule_warmup_ratio,
+    )
 
     # AMP precision is configurable to allow bf16 on A100 while keeping mixed precision.
     amp_dtype = get_amp_dtype()

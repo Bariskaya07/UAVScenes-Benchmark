@@ -58,14 +58,13 @@ def req_float(pattern: str, text: str, label: str) -> float:
 
 def parse_cmx() -> ScheduleSpec:
     config = read("CMX/config.py")
-    train_py = read("CMX/train.py")
     lr_policy = read("CMX/utils/lr_policy.py")
     return ScheduleSpec(
         model="CMX",
         total_epochs=req_int(r"C\.nepochs\s*=\s*(\d+)", config, "CMX total epochs"),
         warmup_epochs=req_int(r"C\.warm_up_epoch\s*=\s*(\d+)", config, "CMX warmup epochs"),
         power=req_float(r"C\.lr_power\s*=\s*([0-9.]+)", config, "CMX power"),
-        warmup_ratio=req_float(r"warmup_ratio\s*=\s*([0-9.]+)", train_py, "CMX warmup ratio"),
+        warmup_ratio=req_float(r"C\.warmup_ratio\s*=\s*([0-9.]+)", config, "CMX warmup ratio"),
         warmup_type="linear" if "Linear warmup" in lr_policy else "unknown",
         source="CMX/config.py + CMX/train.py",
     )

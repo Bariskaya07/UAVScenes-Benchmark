@@ -781,6 +781,15 @@ def main():
     logger.info(f"Iters/epoch: {iters_per_epoch}")
     logger.info(f"Total iters: {total_iters}")
     logger.info(f"Warmup iters: {warmup_iters}")
+    logger.info(
+        "[LR] epochs=%d warmup_epochs=%d warmup_iters=%d power=%.3f warmup_ratio=%.3f warmup=%s",
+        cfg.training.epochs,
+        cfg.scheduler.warmup_epochs,
+        warmup_iters,
+        cfg.scheduler.power,
+        cfg.scheduler.warmup_ratio,
+        cfg.scheduler.warmup_type,
+    )
 
     # Build optimizer with fair benchmark param groups
     lr = cfg.optimizer.lr

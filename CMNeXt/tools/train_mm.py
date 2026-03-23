@@ -503,6 +503,16 @@ def main():
     criterion = get_loss(cfg)
     optimizer = get_optimizer(model, cfg)
     scheduler = get_scheduler(optimizer, cfg, len(train_loader))
+    scheduler_cfg = cfg.get('SCHEDULER', {})
+    print(
+        "[LR] "
+        f"epochs={cfg['TRAIN']['EPOCHS']} "
+        f"warmup_epochs={scheduler_cfg.get('WARMUP', 0)} "
+        f"warmup_iters={scheduler_cfg.get('WARMUP', 0) * len(train_loader)} "
+        f"power={scheduler_cfg.get('POWER', 0.9)} "
+        f"warmup_ratio={scheduler_cfg.get('WARMUP_RATIO', 0.1)} "
+        "warmup=linear"
+    )
 
     # AMP scaler
     amp_enabled = cfg['TRAIN'].get('AMP', True)
