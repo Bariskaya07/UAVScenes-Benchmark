@@ -18,6 +18,7 @@ import argparse
 import yaml
 import time
 from datetime import datetime
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -31,6 +32,7 @@ except ImportError:
     FVCORE_AVAILABLE = False
 
 # Local imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from models import WeTr
 from datasets import UAVScenesDataset
 from utils.transforms import TrainTransform, ValTransform, TestTransform
@@ -40,6 +42,7 @@ from utils.helpers import (
     setup_logger, save_checkpoint, load_checkpoint,
     AverageMeter, set_seed, count_parameters, sliding_window_inference
 )
+from shared_paths import resolve_pretrained_path
 
 
 class Config:
@@ -94,7 +97,7 @@ def load_config(config_path):
         return os.path.abspath(os.path.join(repo_root, path_value))
 
     config_dict['dataset']['data_path'] = resolve_path(config_dict['dataset']['data_path'])
-    config_dict['model']['pretrained'] = resolve_path(config_dict['model']['pretrained'])
+    config_dict['model']['pretrained'] = resolve_pretrained_path(config_dict['model']['pretrained'], repo_root)
     config_dict['logging']['log_dir'] = resolve_path(config_dict['logging']['log_dir'])
     config_dict['logging']['checkpoint_dir'] = resolve_path(config_dict['logging']['checkpoint_dir'])
     return Config(config_dict)

@@ -21,7 +21,7 @@ SAVE_DIR        : 'output/UAVScenes_MulVMamba'
 MODEL:
   NAME          : MulMamba                                          # Model name
   BACKBONE      : MulMamba-T                                        # VMamba-Tiny backbone (fair comparison)
-  PRETRAINED    : 'checkpoints/pretrained/Vmamba/Vmamba-T.pth'  # Repo-relative VMamba-Tiny weights
+  PRETRAINED    : 'pretrained/Vmamba-T.pth'                 # Shared VMamba-Tiny weights
   RESUME        : ''                                                # Checkpoint for resume
   EXP           : 'uavscenes_rgb_hag'                               # Experiment name
   EXTRA_IN_CHANS: 3                                                 # Aux modality input channels (3=stacked for backward compat)

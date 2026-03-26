@@ -21,7 +21,7 @@ SEED: 42                     # Reproducibility
 MODEL:
   NAME: CMNeXt
   BACKBONE: mit_b2           # SegFormer-B2 Backbone
-  PRETRAINED: checkpoints/pretrained/mit_b2.pth
+  PRETRAINED: pretrained/mit_b2.pth
   NUM_CLASSES: 19            # 19 classes (remapped)
   EMBED_DIM: 768             # Decoder embedding dimension
   AUX_IN_CHANS: 3            # Input channels for aux modality (3=stacked HAG for backward compat)

@@ -37,6 +37,7 @@ except ImportError:
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from semseg.datasets import UAVScenes
 from semseg.models import CMNeXt, cmnext_b2
@@ -45,6 +46,7 @@ from semseg.losses import get_loss
 from semseg.optimizers import get_optimizer
 from semseg.scheduler import get_scheduler
 from semseg.metrics import UAVScenesMetrics, EarlyStopping
+from shared_paths import resolve_pretrained_path
 
 
 def parse_args():
@@ -70,7 +72,7 @@ def load_config(cfg_path):
 
     cfg['SAVE_DIR'] = resolve_path(cfg['SAVE_DIR'])
     cfg['DATASET']['ROOT'] = resolve_path(cfg['DATASET']['ROOT'])
-    cfg['MODEL']['PRETRAINED'] = resolve_path(cfg['MODEL']['PRETRAINED'])
+    cfg['MODEL']['PRETRAINED'] = resolve_pretrained_path(cfg['MODEL']['PRETRAINED'], repo_root)
     return cfg
 
 

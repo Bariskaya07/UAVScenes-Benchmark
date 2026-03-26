@@ -1,4 +1,5 @@
 import os
+import sys
 import torch 
 import torch.nn as nn
 import argparse
@@ -26,6 +27,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT.parent))
+from shared_paths import resolve_pretrained_path
 
 
 def resolve_repo_path(path_str):
@@ -34,6 +37,8 @@ def resolve_repo_path(path_str):
     path = Path(os.path.expanduser(path_str))
     if path.is_absolute():
         return path
+    if "pretrained" in path.parts or path.name.endswith(".pth"):
+        return Path(resolve_pretrained_path(path_str, REPO_ROOT))
     return REPO_ROOT / path
 
 

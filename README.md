@@ -99,7 +99,7 @@ Example:
     └── Vmamba-T.pth
 ```
 
-Inside each repo, local links such as `data/UAVScenes` or `datasets/UAVScenes` can point to the same shared dataset root. The same idea applies to pretrained weights.
+Inside each repo, local links such as `data/UAVScenes` or `datasets/UAVScenes` can point to the same shared dataset root. Pretrained backbones now follow the same idea: the training scripts first honor any repo-local path, then automatically fall back to the shared VM layout under `~/thesis-uavscenes/uavscenes007/pretrained/` (or `UAVSCENES_PRETRAINED_ROOT` if you set it).
 
 We intentionally do not commit machine-specific dataset symlinks, because absolute local paths would break on other VMs.
 

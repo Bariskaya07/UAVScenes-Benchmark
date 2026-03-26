@@ -30,6 +30,7 @@ import shutil
 import logging
 import warnings
 from datetime import datetime, timedelta
+from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
@@ -56,6 +57,9 @@ from utils.augmentations_mm import (
     RandomColorJitter, RandomHorizontalFlip, RandomGaussianBlur,
     RandomResizedCrop, Normalize, Resize
 )
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from shared_paths import resolve_pretrained_path
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +105,21 @@ def parse_args():
 
 def load_config(config_path):
     """Load YAML config file."""
+    config_path = Path(config_path).resolve()
     with open(config_path, 'r') as f:
         config_dict = yaml.safe_load(f)
+    repo_root = config_path.parent.parent
+
+    def resolve_path(path_value):
+        path_obj = Path(path_value)
+        if path_obj.is_absolute():
+            return str(path_obj)
+        return str((repo_root / path_obj).resolve())
+
+    config_dict['dataset']['data_path'] = resolve_path(config_dict['dataset']['data_path'])
+    config_dict['model']['pretrained'] = resolve_pretrained_path(config_dict['model']['pretrained'], repo_root)
+    config_dict['logging']['log_dir'] = resolve_path(config_dict['logging']['log_dir'])
+    config_dict['logging']['checkpoint_dir'] = resolve_path(config_dict['logging']['checkpoint_dir'])
     return Config(config_dict)
 
 

@@ -1,10 +1,14 @@
 import os
+import sys
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from . import mix_transformer
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from shared_paths import resolve_pretrained_path
 
 try:
     from mmcv.cnn import ConvModule  # type: ignore
@@ -363,7 +367,10 @@ class WeTr(nn.Module):
             # Initialize encoder from ImageNet backbone weights during training.
             # For pure evaluation from a full checkpoint, this can be skipped.
             if load_pretrained:
-                pretrained_path = os.path.join(REPO_ROOT, "pretrained", backbone + ".pth")
+                pretrained_path = resolve_pretrained_path(
+                    os.path.join("pretrained", backbone + ".pth"),
+                    REPO_ROOT,
+                )
                 if not os.path.isfile(pretrained_path):
                     raise FileNotFoundError(
                         f"Pretrained backbone not found: {pretrained_path}. "

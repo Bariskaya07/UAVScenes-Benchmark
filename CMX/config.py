@@ -2,9 +2,16 @@ import os
 import os.path as osp
 import sys
 import time
+from pathlib import Path
 import numpy as np
 from easydict import EasyDict as edict
 import argparse
+
+BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
+if str(BENCHMARK_ROOT) not in sys.path:
+    sys.path.insert(0, str(BENCHMARK_ROOT))
+
+from shared_paths import resolve_pretrained_path
 
 C = edict()
 config = C
@@ -50,7 +57,7 @@ C.norm_std = np.array([0.229, 0.224, 0.225])
 
 """ Settings for network, this would be different for each kind of model"""
 C.backbone = 'mit_b2'
-C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
+C.pretrained_model = resolve_pretrained_path('pretrained/mit_b2.pth', C.root_dir)
 C.decoder = 'MLPDecoder'
 C.decoder_embed_dim = 768  # Match CMNeXt benchmark (768, not default 512)
 C.optimizer = 'AdamW'
