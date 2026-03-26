@@ -298,14 +298,39 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
                 ignore_label=cfg.dataset.ignore_label
             )
 
+        if not torch.isfinite(loss):
+            logger.warning(
+                f'Non-finite loss at epoch {epoch} iter {i}, skipping step... '
+                f'(rgb_finite={bool(torch.isfinite(rgb).all().item())}, '
+                f'hag_finite={bool(torch.isfinite(hag).all().item())})'
+            )
+            optimizer.zero_grad()
+            del loss, outputs, masks, rgb, hag, label
+            torch.cuda.empty_cache()
+            continue
+
         # Backward pass
         optimizer.zero_grad()
         if amp_enabled:
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer.optimizer)
+        else:
+            loss.backward()
+
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        if not torch.isfinite(grad_norm):
+            logger.warning(f'Non-finite gradient at epoch {epoch} iter {i}, skipping step...')
+            optimizer.zero_grad()
+            if amp_enabled:
+                scaler.update()
+            del grad_norm, loss, outputs, masks, rgb, hag, label
+            torch.cuda.empty_cache()
+            continue
+
+        if amp_enabled:
             scaler.step(optimizer.optimizer)
             scaler.update()
         else:
-            loss.backward()
             optimizer.optimizer.step()
 
         # Update LR

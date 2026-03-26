@@ -707,6 +707,23 @@ def train(
                 except Exception:
                     pass
 
+        grad_params = [p for p in segmenter.parameters() if p.grad is not None]
+        grad_norm = None
+        if grad_params:
+            try:
+                grad_norm = torch.norm(torch.stack([p.grad.detach().norm(2) for p in grad_params]), 2)
+            except Exception:
+                grad_norm = None
+
+        if grad_norm is not None and not torch.isfinite(grad_norm):
+            if _is_main_process():
+                print_log(f"[NaN] Non-finite gradient at epoch={epoch} iter={i}, skipping step")
+            optimizer.zero_grad(set_to_none=True)
+            if amp_enabled and scaler is not None:
+                scaler.update()
+            torch.cuda.empty_cache()
+            continue
+
         if print_loss:
             print(f"step: {i:3d}: loss={loss:.2f}", flush=True)
 
