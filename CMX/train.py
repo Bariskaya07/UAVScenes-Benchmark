@@ -56,6 +56,19 @@ def set_seed(seed):
     cudnn.benchmark = False
 
 
+def get_cuda_memory_stats_mb(device):
+    if not torch.cuda.is_available():
+        return None
+    current_device = device if isinstance(device, torch.device) else torch.device(device)
+    scale = 1024 ** 2
+    return {
+        'allocated': torch.cuda.memory_allocated(current_device) / scale,
+        'reserved': torch.cuda.memory_reserved(current_device) / scale,
+        'peak_allocated': torch.cuda.max_memory_allocated(current_device) / scale,
+        'peak_reserved': torch.cuda.max_memory_reserved(current_device) / scale,
+    }
+
+
 @torch.no_grad()
 def validate_batched(model, val_dataset, device, num_classes, batch_size=8):
     """Fast whole-image validation on resized VAL_SCENES samples."""
@@ -271,6 +284,8 @@ with Engine(custom_parser=parser) as engine:
     best_epoch = 0
 
     for epoch in range(engine.state.epoch, config.nepochs + 1):
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(device)
         if engine.distributed:
             train_sampler.set_epoch(epoch)
         bar_format = '{desc}[{elapsed}<{remaining},{rate_fmt}]'
@@ -369,6 +384,28 @@ with Engine(custom_parser=parser) as engine:
                         + ' lr=%.4e' % lr \
                         + ' loss=%.4f total_loss=%.4f' % (loss.item(), (sum_loss / (idx + 1)))
 
+            if torch.cuda.is_available():
+                mem = get_cuda_memory_stats_mb(device)
+                print_str += (
+                    ' alloc=%.0fMiB reserved=%.0fMiB peak_alloc=%.0fMiB peak_reserved=%.0fMiB'
+                    % (
+                        mem['allocated'],
+                        mem['reserved'],
+                        mem['peak_allocated'],
+                        mem['peak_reserved'],
+                    )
+                )
+                if is_main and ((idx + 1) == 1 or (idx + 1) % 100 == 0):
+                    logger.info(
+                        'Epoch %d Iter %d memory: alloc=%.0fMiB reserved=%.0fMiB peak_alloc=%.0fMiB peak_reserved=%.0fMiB',
+                        epoch,
+                        idx + 1,
+                        mem['allocated'],
+                        mem['reserved'],
+                        mem['peak_allocated'],
+                        mem['peak_reserved'],
+                    )
+
             if engine.distributed:
                 del reduce_loss
             del grad_norm, loss, imgs, gts, modal_xs, minibatch
@@ -376,6 +413,14 @@ with Engine(custom_parser=parser) as engine:
 
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
+            if torch.cuda.is_available():
+                epoch_mem = get_cuda_memory_stats_mb(device)
+                logger.info(
+                    'Epoch %d peak memory: peak_alloc=%.0fMiB peak_reserved=%.0fMiB',
+                    epoch,
+                    epoch_mem['peak_allocated'],
+                    epoch_mem['peak_reserved'],
+                )
 
         # Validation + best checkpoint using fast whole-image validation on val set
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
