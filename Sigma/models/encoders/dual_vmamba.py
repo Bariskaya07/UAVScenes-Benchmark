@@ -1,4 +1,6 @@
 import os
+import sys
+from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,7 +16,8 @@ from models.encoders.vmamba import Backbone_VSSM, CrossMambaFusionBlock, ConcatM
 
 logger = get_logger()
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PRETRAIN_DIR = os.path.join(REPO_ROOT, 'pretrained', 'vmamba')
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from shared_paths import resolve_pretrained_path
 
 
 class RGBXTransformer(nn.Module):
@@ -118,7 +121,7 @@ class vssm_tiny(RGBXTransformer):
         super(vssm_tiny, self).__init__(
             depths=[2, 2, 9, 2], 
             dims=96,
-            pretrained=os.path.join(PRETRAIN_DIR, 'Vmamba-T.pth'),
+            pretrained=resolve_pretrained_path('pretrained/Vmamba-T.pth', REPO_ROOT),
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.2,
@@ -129,7 +132,7 @@ class vssm_small(RGBXTransformer):
         super(vssm_small, self).__init__(
             depths=[2, 2, 27, 2],
             dims=96,
-            pretrained=os.path.join(PRETRAIN_DIR, 'vssmsmall_dp03_ckpt_epoch_238.pth'),
+            pretrained=resolve_pretrained_path('pretrained/vssmsmall_dp03_ckpt_epoch_238.pth', REPO_ROOT),
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.3,
@@ -140,7 +143,7 @@ class vssm_base(RGBXTransformer):
         super(vssm_base, self).__init__(
             depths=[2, 2, 27, 2],
             dims=128,
-            pretrained=os.path.join(PRETRAIN_DIR, 'vssmbase_dp06_ckpt_epoch_241.pth'),
+            pretrained=resolve_pretrained_path('pretrained/vssmbase_dp06_ckpt_epoch_241.pth', REPO_ROOT),
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.6, # VMamba-B with droppath 0.5 + no ema. VMamba-B* represents for VMamba-B with droppath 0.6 + ema
