@@ -174,14 +174,42 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
 
     start_time = time.time()
     optimizer.zero_grad()  # Zero gradients at start
+    data_iter = iter(dataloader)
 
-    for batch_idx, (inputs, target) in enumerate(dataloader):
+    def memory_stats_mb():
+        if device.type != 'cuda' or not torch.cuda.is_available():
+            return None
+        scale = 1024 ** 2
+        return {
+            'alloc': torch.cuda.memory_allocated(device) / scale,
+            'reserved': torch.cuda.memory_reserved(device) / scale,
+            'peak_alloc': torch.cuda.max_memory_allocated(device) / scale,
+            'peak_reserved': torch.cuda.max_memory_reserved(device) / scale,
+        }
+
+    if device.type == 'cuda' and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats(device)
+
+    print(
+        f"[Train] Epoch {epoch}: {num_batches} batches | "
+        f"AMP={amp_enabled} ({cfg['TRAIN'].get('AMP_DTYPE', 'bf16')}) | "
+        f"log_interval={log_interval} | accum_steps={accum_steps}",
+        flush=True,
+    )
+    print("[Train] Fetching first batch...", flush=True)
+
+    for batch_idx in range(num_batches):
+        inputs, target = next(data_iter)
+        if batch_idx == 0:
+            print("[Train] First batch fetched; moving tensors to device...", flush=True)
         # Move to device
         if isinstance(inputs, (list, tuple)):
             inputs = [x.to(device) for x in inputs]
         else:
             inputs = inputs.to(device)
         target = target.to(device)
+        if batch_idx == 0:
+            print("[Train] First batch on device; starting forward/backward...", flush=True)
 
         # Forward pass with AMP
         if amp_enabled:
@@ -192,7 +220,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
 
             # NaN/Inf loss kontrolü - bu batch'i atla
             if torch.isnan(loss) or torch.isinf(loss):
-                print(f"Warning: NaN/Inf loss at batch {batch_idx}, skipping...")
+                print(f"Warning: NaN/Inf loss at batch {batch_idx}, skipping...", flush=True)
                 del logits, loss  # Tensor'ları sil
                 optimizer.zero_grad()
                 torch.cuda.empty_cache()  # GPU memory'yi temizle
@@ -209,7 +237,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
                 # NaN gradient kontrolü
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 if torch.isnan(grad_norm) or torch.isinf(grad_norm):
-                    print(f"Warning: NaN/Inf gradient at batch {batch_idx}, skipping step...")
+                    print(f"Warning: NaN/Inf gradient at batch {batch_idx}, skipping step...", flush=True)
                     optimizer.zero_grad()
                     scaler.update()
                     torch.cuda.empty_cache()  # GPU memory'yi temizle
@@ -226,7 +254,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
             
             # NaN/Inf loss kontrolü
             if torch.isnan(loss) or torch.isinf(loss):
-                print(f"Warning: NaN/Inf loss at batch {batch_idx}, skipping...")
+                print(f"Warning: NaN/Inf loss at batch {batch_idx}, skipping...", flush=True)
                 del logits, loss
                 optimizer.zero_grad()
                 torch.cuda.empty_cache()
@@ -238,7 +266,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
                 # Gradient clipping for numerical stability
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 if torch.isnan(grad_norm) or torch.isinf(grad_norm):
-                    print(f"Warning: NaN/Inf gradient at batch {batch_idx}, skipping step...")
+                    print(f"Warning: NaN/Inf gradient at batch {batch_idx}, skipping step...", flush=True)
                     optimizer.zero_grad()
                     torch.cuda.empty_cache()
                     continue
@@ -250,20 +278,36 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
         total_loss += loss.item() * accum_steps  # Unscale for logging
 
         # Logging
-        if (batch_idx + 1) % log_interval == 0 or batch_idx == num_batches - 1:
+        if batch_idx == 0 or (batch_idx + 1) % log_interval == 0 or batch_idx == num_batches - 1:
             current_lr = optimizer.param_groups[0]['lr']
             elapsed = time.time() - start_time
             eta = elapsed / (batch_idx + 1) * (num_batches - batch_idx - 1)
+            mem = memory_stats_mb()
 
-            print(f"Epoch [{epoch}] [{batch_idx+1}/{num_batches}] "
-                  f"Loss: {loss.item():.4f} "
-                  f"LR: {current_lr:.2e} "
-                  f"ETA: {eta/60:.1f}min")
+            print_str = (
+                f"Epoch [{epoch}] [{batch_idx+1}/{num_batches}] "
+                f"Loss: {loss.item():.4f} "
+                f"LR: {current_lr:.2e} "
+                f"ETA: {eta/60:.1f}min"
+            )
+            if mem is not None:
+                print_str += (
+                    f" | alloc={mem['alloc']:.0f}MiB"
+                    f" reserved={mem['reserved']:.0f}MiB"
+                    f" peak_alloc={mem['peak_alloc']:.0f}MiB"
+                    f" peak_reserved={mem['peak_reserved']:.0f}MiB"
+                )
+            print(print_str, flush=True)
 
             # TensorBoard
             global_step = epoch * num_batches + batch_idx
             writer.add_scalar('Train/Loss', loss.item(), global_step)
             writer.add_scalar('Train/LR', current_lr, global_step)
+            if mem is not None:
+                writer.add_scalar('Train/MemoryAllocatedMB', mem['alloc'], global_step)
+                writer.add_scalar('Train/MemoryReservedMB', mem['reserved'], global_step)
+                writer.add_scalar('Train/PeakMemoryAllocatedMB', mem['peak_alloc'], global_step)
+                writer.add_scalar('Train/PeakMemoryReservedMB', mem['peak_reserved'], global_step)
 
     avg_loss = total_loss / num_batches
     return avg_loss
