@@ -13,8 +13,16 @@ Reference:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from . import mix_transformer
 from .modules import num_parallel
+
+
+def _bn_checkpoint_safe(module):
+    for submodule in module.modules():
+        if isinstance(submodule, nn.BatchNorm2d) and submodule.training:
+            return False
+    return True
 
 
 class MLP(nn.Module):
@@ -41,7 +49,7 @@ class ConvBNReLU(nn.Module):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
         self.bn = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU(inplace=False)
 
     def forward(self, x):
         return self.relu(self.bn(self.conv(x)))
@@ -135,16 +143,18 @@ class WeTr(nn.Module):
         pretrained: Path to pretrained weights or bool to load default
     """
 
-    def __init__(self, backbone='mit_b2', num_classes=19, embedding_dim=256, pretrained=None):
+    def __init__(self, backbone='mit_b2', num_classes=19, embedding_dim=256, pretrained=None,
+                 activation_checkpoint=False):
         super().__init__()
 
         self.num_classes = num_classes
         self.embedding_dim = embedding_dim
         self.feature_strides = [4, 8, 16, 32]
         self.num_parallel = num_parallel
+        self.activation_checkpoint = activation_checkpoint
 
         # Initialize encoder
-        self.encoder = getattr(mix_transformer, backbone)()
+        self.encoder = getattr(mix_transformer, backbone)(use_checkpoint=activation_checkpoint)
         self.in_channels = self.encoder.embed_dims
 
         # Load pretrained weights if provided
@@ -162,6 +172,26 @@ class WeTr(nn.Module):
         # Learnable weights for ensemble
         self.alpha = nn.Parameter(torch.ones(self.num_parallel, requires_grad=True))
         self.register_parameter('alpha', self.alpha)
+
+        if self.activation_checkpoint:
+            print("[TokenFusion] Activation checkpointing enabled")
+
+    def _should_checkpoint_decoder(self, features):
+        return (
+            self.activation_checkpoint
+            and self.training
+            and all(feat.requires_grad for feat in features)
+            and _bn_checkpoint_safe(self.decoder)
+        )
+
+    def _run_decoder(self, features):
+        if not self._should_checkpoint_decoder(features):
+            return self.decoder(features)
+
+        def custom_forward(*decoder_inputs):
+            return self.decoder(list(decoder_inputs))
+
+        return checkpoint(custom_forward, *features, use_reentrant=False)
 
     def _load_pretrained(self, pretrained):
         """Load pretrained weights for encoder."""
@@ -229,7 +259,7 @@ class WeTr(nn.Module):
         x, masks = self.encoder(x)
 
         # Decoder forward for each modality
-        x = [self.decoder(x[0]), self.decoder(x[1])]
+        x = [self._run_decoder(x[0]), self._run_decoder(x[1])]
 
         # Learned ensemble of modality predictions
         ens = 0
@@ -279,7 +309,8 @@ def expand_state_dict(model_dict, state_dict, num_parallel):
     return model_dict
 
 
-def build_model(backbone='mit_b2', num_classes=19, embedding_dim=256, pretrained=None):
+def build_model(backbone='mit_b2', num_classes=19, embedding_dim=256, pretrained=None,
+                activation_checkpoint=False):
     """
     Build WeTr model.
 
@@ -296,7 +327,8 @@ def build_model(backbone='mit_b2', num_classes=19, embedding_dim=256, pretrained
         backbone=backbone,
         num_classes=num_classes,
         embedding_dim=embedding_dim,
-        pretrained=pretrained
+        pretrained=pretrained,
+        activation_checkpoint=activation_checkpoint,
     )
     return model
 

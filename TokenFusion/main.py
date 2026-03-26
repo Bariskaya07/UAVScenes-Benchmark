@@ -210,7 +210,8 @@ def build_model(cfg, device):
         backbone=cfg.model.backbone,
         num_classes=cfg.dataset.num_classes,
         embedding_dim=cfg.model.embedding_dim,
-        pretrained=pretrained
+        pretrained=pretrained,
+        activation_checkpoint=getattr(cfg.model, 'activation_checkpoint', False),
     )
 
     model = model.to(device)

@@ -40,6 +40,7 @@ model:
   # MiT-B2 backbone for fair comparison with CMNeXt
   backbone: "mit_b2"
   embedding_dim: 256
+  activation_checkpoint: true
   # Input channels: TokenFusion uses shared weights, both modalities need 3ch
   in_chans: 3  # RGB and HAG both use 3 channels (HAG stacked in dataset)
 

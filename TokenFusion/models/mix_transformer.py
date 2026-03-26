@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
+from torch.utils.checkpoint import checkpoint
 
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from .modules import ModuleParallel, LayerNormParallel, num_parallel, TokenExchange
@@ -320,12 +321,14 @@ class MixVisionTransformer(nn.Module):
         drop_path_rate=0.,
         norm_layer=LayerNormParallel,
         depths=[3, 4, 6, 3],
-        sr_ratios=[8, 4, 2, 1]
+        sr_ratios=[8, 4, 2, 1],
+        use_checkpoint=False,
     ):
         super().__init__()
         self.num_classes = num_classes
         self.depths = depths
         self.embed_dims = embed_dims
+        self.use_checkpoint = use_checkpoint
 
         # Patch embeddings for each stage
         self.patch_embed1 = OverlapPatchEmbed(
@@ -434,6 +437,27 @@ class MixVisionTransformer(nn.Module):
     def no_weight_decay(self):
         return {'pos_embed1', 'pos_embed2', 'pos_embed3', 'pos_embed4', 'cls_token'}
 
+    def _should_checkpoint(self, x):
+        return self.use_checkpoint and self.training and all(t.requires_grad for t in x)
+
+    def _run_block(self, block, x, H, W, mask):
+        if not self._should_checkpoint(x):
+            return block(x, H, W, mask)
+
+        def custom_forward(x0, x1, m0, m1, module=block, height=H, width=W):
+            out = module([x0, x1], height, width, [m0, m1])
+            return out[0], out[1]
+
+        out0, out1 = checkpoint(
+            custom_forward,
+            x[0],
+            x[1],
+            mask[0],
+            mask[1],
+            use_reentrant=False,
+        )
+        return [out0, out1]
+
     def forward_features(self, x):
         """
         Forward pass through encoder.
@@ -456,7 +480,7 @@ class MixVisionTransformer(nn.Module):
             score = self.score_predictor[0](x)
             mask = [F.softmax(score_.reshape(B, -1, 2), dim=2)[:, :, 0] for score_ in score]
             masks.append(mask)
-            x = blk(x, H, W, mask)
+            x = self._run_block(blk, x, H, W, mask)
         x = self.norm1(x)
         x = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for x_ in x]
         outs0.append(x[0])
@@ -468,7 +492,7 @@ class MixVisionTransformer(nn.Module):
             score = self.score_predictor[1](x)
             mask = [F.softmax(score_.reshape(B, -1, 2), dim=2)[:, :, 0] for score_ in score]
             masks.append(mask)
-            x = blk(x, H, W, mask)
+            x = self._run_block(blk, x, H, W, mask)
         x = self.norm2(x)
         x = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for x_ in x]
         outs0.append(x[0])
@@ -480,7 +504,7 @@ class MixVisionTransformer(nn.Module):
             score = self.score_predictor[2](x)
             mask = [F.softmax(score_.reshape(B, -1, 2), dim=2)[:, :, 0] for score_ in score]
             masks.append(mask)
-            x = blk(x, H, W, mask)
+            x = self._run_block(blk, x, H, W, mask)
         x = self.norm3(x)
         x = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for x_ in x]
         outs0.append(x[0])
@@ -492,7 +516,7 @@ class MixVisionTransformer(nn.Module):
             score = self.score_predictor[3](x)
             mask = [F.softmax(score_.reshape(B, -1, 2), dim=2)[:, :, 0] for score_ in score]
             masks.append(mask)
-            x = blk(x, H, W, mask)
+            x = self._run_block(blk, x, H, W, mask)
         x = self.norm4(x)
         x = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for x_ in x]
         outs0.append(x[0])
@@ -520,7 +544,8 @@ class mit_b0(MixVisionTransformer):
             depths=[2, 2, 2, 2],
             sr_ratios=[8, 4, 2, 1],
             drop_rate=0.0,
-            drop_path_rate=0.1
+            drop_path_rate=0.1,
+            **kwargs,
         )
 
 
@@ -537,7 +562,8 @@ class mit_b1(MixVisionTransformer):
             depths=[2, 2, 2, 2],
             sr_ratios=[8, 4, 2, 1],
             drop_rate=0.0,
-            drop_path_rate=0.1
+            drop_path_rate=0.1,
+            **kwargs,
         )
 
 
@@ -561,7 +587,8 @@ class mit_b2(MixVisionTransformer):
             depths=[3, 4, 6, 3],
             sr_ratios=[8, 4, 2, 1],
             drop_rate=0.0,
-            drop_path_rate=0.1
+            drop_path_rate=0.1,
+            **kwargs,
         )
 
 
@@ -578,7 +605,8 @@ class mit_b3(MixVisionTransformer):
             depths=[3, 4, 18, 3],
             sr_ratios=[8, 4, 2, 1],
             drop_rate=0.0,
-            drop_path_rate=0.1
+            drop_path_rate=0.1,
+            **kwargs,
         )
 
 
@@ -595,7 +623,8 @@ class mit_b4(MixVisionTransformer):
             depths=[3, 8, 27, 3],
             sr_ratios=[8, 4, 2, 1],
             drop_rate=0.0,
-            drop_path_rate=0.1
+            drop_path_rate=0.1,
+            **kwargs,
         )
 
 
@@ -612,5 +641,6 @@ class mit_b5(MixVisionTransformer):
             depths=[3, 6, 40, 3],
             sr_ratios=[8, 4, 2, 1],
             drop_rate=0.0,
-            drop_path_rate=0.1
+            drop_path_rate=0.1,
+            **kwargs,
         )
