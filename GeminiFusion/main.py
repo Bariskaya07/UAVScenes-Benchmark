@@ -244,6 +244,20 @@ def get_arguments():
         choices=["bf16", "fp16"],
         help="AMP autocast dtype (default: bf16)",
     )
+    ckpt_group = parser.add_mutually_exclusive_group()
+    ckpt_group.add_argument(
+        "--activation-checkpoint",
+        dest="activation_checkpoint",
+        action="store_true",
+        help="Enable activation checkpointing for GeminiFusion encoder/decoder",
+    )
+    ckpt_group.add_argument(
+        "--no-activation-checkpoint",
+        dest="activation_checkpoint",
+        action="store_false",
+        help="Disable activation checkpointing",
+    )
+    parser.set_defaults(activation_checkpoint=True)
     parser.add_argument(
         "--num-epoch",
         type=int,
@@ -347,9 +361,16 @@ def get_arguments():
     return parser.parse_args()
 
 
-def create_segmenter(num_classes, gpu, backbone, n_heads, dpr, drop_rate):
+def create_segmenter(num_classes, gpu, backbone, n_heads, dpr, drop_rate, activation_checkpoint):
     """Create segmentation model."""
-    segmenter = WeTr(backbone, num_classes, n_heads, dpr, drop_rate)
+    segmenter = WeTr(
+        backbone,
+        num_classes,
+        n_heads,
+        dpr,
+        drop_rate,
+        activation_checkpoint=activation_checkpoint,
+    )
     param_groups = segmenter.get_param_groups()
     assert torch.cuda.is_available()
     segmenter.to("cuda:" + str(gpu))
@@ -1172,6 +1193,7 @@ def main():
     helpers.logger = open(log_path, "w+")
     print_log(" ".join(sys.argv))
     print_log(f"AMP: {args.amp} (dtype={args.amp_dtype})")
+    print_log(f"Activation checkpointing: {args.activation_checkpoint}")
 
     # Set random seeds
     torch.backends.cudnn.deterministic = True
@@ -1189,6 +1211,7 @@ def main():
         args.n_heads,
         args.dpr,
         args.drop_rate,
+        args.activation_checkpoint,
     )
 
     # AMP scaler (enabled/disabled via args.amp)

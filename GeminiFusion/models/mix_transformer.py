@@ -6,6 +6,7 @@
 import math
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from .modules import ModuleParallel, LayerNormParallel
@@ -235,8 +236,7 @@ class Attention(nn.Module):
 
         new_x0 = torch.stack(new_x0)
         new_x1 = torch.stack(new_x1)
-        x[0] = new_x0
-        x[1] = new_x1
+        x = [new_x0, new_x1]
 
         x = self.proj(x)
         x = self.proj_drop(x)
@@ -389,12 +389,14 @@ class MixVisionTransformer(nn.Module):
         depths=[3, 4, 6, 3],
         sr_ratios=[8, 4, 2, 1],
         n_heads=8,
+        use_checkpoint=False,
     ):
         super().__init__()
 
         self.num_classes = num_classes
         self.depths = depths
         self.embed_dims = embed_dims
+        self.use_checkpoint = use_checkpoint
 
         # patch_embed
         self.patch_embed1 = OverlapPatchEmbed(
@@ -516,6 +518,24 @@ class MixVisionTransformer(nn.Module):
 
         self.apply(self._init_weights)
 
+    def _should_checkpoint(self, x):
+        if not self.use_checkpoint or not self.training:
+            return False
+        if not isinstance(x, (list, tuple)) or len(x) != 2:
+            return False
+        return all(torch.is_tensor(x_) and x_.requires_grad for x_ in x)
+
+    def _run_block(self, block, x, H, W):
+        if not self._should_checkpoint(x):
+            return block(x, H, W)
+
+        def custom_forward(x0, x1):
+            out0, out1 = block([x0, x1], H, W)
+            return out0, out1
+
+        out0, out1 = checkpoint(custom_forward, x[0], x[1], use_reentrant=False)
+        return [out0, out1]
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=0.02)
@@ -578,12 +598,7 @@ class MixVisionTransformer(nn.Module):
         # stage 1
         x, H, W = self.patch_embed1(x)
         for i, blk in enumerate(self.block1):
-
-            x = blk(
-                x,
-                H,
-                W,
-            )
+            x = self._run_block(blk, x, H, W)
         x = self.norm1(x)
         x = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for x_ in x]
         outs0.append(x[0])
@@ -592,12 +607,7 @@ class MixVisionTransformer(nn.Module):
         # stage 2
         x, H, W = self.patch_embed2(x)
         for i, blk in enumerate(self.block2):
-
-            x = blk(
-                x,
-                H,
-                W,
-            )
+            x = self._run_block(blk, x, H, W)
         x = self.norm2(x)
         x = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for x_ in x]
         outs0.append(x[0])
@@ -606,12 +616,7 @@ class MixVisionTransformer(nn.Module):
         # stage 3
         x, H, W = self.patch_embed3(x)
         for i, blk in enumerate(self.block3):
-
-            x = blk(
-                x,
-                H,
-                W,
-            )
+            x = self._run_block(blk, x, H, W)
         x = self.norm3(x)
         x = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for x_ in x]
         outs0.append(x[0])
@@ -620,12 +625,7 @@ class MixVisionTransformer(nn.Module):
         # stage 4
         x, H, W = self.patch_embed4(x)
         for i, blk in enumerate(self.block4):
-
-            x = blk(
-                x,
-                H,
-                W,
-            )
+            x = self._run_block(blk, x, H, W)
         x = self.norm4(x)
         x = [x_.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() for x_ in x]
         outs0.append(x[0])
@@ -666,6 +666,7 @@ class mit_b0(MixVisionTransformer):
             drop_rate=drop_rate,
             drop_path_rate=dpr,
             n_heads=n_heads,
+            **kwargs,
         )
 
 
@@ -683,6 +684,7 @@ class mit_b1(MixVisionTransformer):
             drop_rate=drop_rate,
             drop_path_rate=dpr,
             n_heads=n_heads,
+            **kwargs,
         )
 
 
@@ -700,6 +702,7 @@ class mit_b2(MixVisionTransformer):
             drop_rate=drop_rate,
             drop_path_rate=dpr,
             n_heads=n_heads,
+            **kwargs,
         )
 
 
@@ -717,6 +720,7 @@ class mit_b3(MixVisionTransformer):
             drop_rate=drop_rate,
             drop_path_rate=dpr,
             n_heads=n_heads,
+            **kwargs,
         )
 
 
@@ -734,6 +738,7 @@ class mit_b4(MixVisionTransformer):
             drop_rate=drop_rate,
             drop_path_rate=dpr,
             n_heads=n_heads,
+            **kwargs,
         )
 
 
@@ -751,4 +756,5 @@ class mit_b5(MixVisionTransformer):
             drop_rate=drop_rate,
             drop_path_rate=dpr,
             n_heads=n_heads,
+            **kwargs,
         )

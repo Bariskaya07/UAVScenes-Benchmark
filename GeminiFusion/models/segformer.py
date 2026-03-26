@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from . import mix_transformer
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -76,6 +77,10 @@ except Exception:
     SwinTransformer = None
 
 
+def _bn_checkpoint_safe(module):
+    return not any(isinstance(m, nn.modules.batchnorm._BatchNorm) and m.training for m in module.modules())
+
+
 class MLP(nn.Module):
     """
     Linear Embedding
@@ -132,6 +137,7 @@ class SegFormerHead(nn.Module):
             out_channels=embedding_dim,
             kernel_size=1,
             norm_cfg=dict(type="BN", requires_grad=True),
+            act_cfg=dict(type="ReLU", inplace=False),
         )
 
         self.linear_pred = nn.Conv2d(embedding_dim, self.num_classes, kernel_size=1)
@@ -320,6 +326,7 @@ class WeTr(nn.Module):
         dpr=0.1,
         drop_rate=0.0,
         load_pretrained=True,
+        activation_checkpoint=False,
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -327,6 +334,7 @@ class WeTr(nn.Module):
         self.feature_strides = [4, 8, 16, 32]
         self.num_parallel = num_parallel
         self.backbone = backbone
+        self.activation_checkpoint = activation_checkpoint
 
         print("-----------------Model Params--------------------------------------")
         print("backbone:", backbone)
@@ -362,7 +370,9 @@ class WeTr(nn.Module):
                 backbone, True, True, dpr, pretrained_backbone_path
             )
         else:
-            self.encoder = getattr(mix_transformer, backbone)(n_heads, dpr, drop_rate)
+            self.encoder = getattr(mix_transformer, backbone)(
+                n_heads, dpr, drop_rate, use_checkpoint=activation_checkpoint
+            )
             self.in_channels = self.encoder.embed_dims
             # Initialize encoder from ImageNet backbone weights during training.
             # For pure evaluation from a full checkpoint, this can be skipped.
@@ -398,6 +408,8 @@ class WeTr(nn.Module):
 
         self.alpha = nn.Parameter(torch.ones(self.num_parallel, requires_grad=True))
         self.register_parameter("alpha", self.alpha)
+        if self.activation_checkpoint:
+            print("[GeminiFusion] Activation checkpointing enabled")
 
     def get_param_groups(self):
         param_groups = [[], [], []]
@@ -414,7 +426,16 @@ class WeTr(nn.Module):
 
         x = self.encoder(x)
 
-        x = [self.decoder(x[0]), self.decoder(x[1])]
+        if self.activation_checkpoint and self.training and _bn_checkpoint_safe(self.decoder):
+            def decode(feat0, feat1, feat2, feat3):
+                return self.decoder([feat0, feat1, feat2, feat3])
+
+            x = [
+                checkpoint(decode, *x[0], use_reentrant=False),
+                checkpoint(decode, *x[1], use_reentrant=False),
+            ]
+        else:
+            x = [self.decoder(x[0]), self.decoder(x[1])]
         ens = 0
         # Compute in FP32 for stability under AMP.
         alpha_soft = F.softmax(self.alpha.float(), dim=0)
