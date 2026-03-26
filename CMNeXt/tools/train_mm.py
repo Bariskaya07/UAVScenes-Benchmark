@@ -147,12 +147,18 @@ def create_model(cfg):
     num_classes = model_cfg.get('NUM_CLASSES', 19)
     pretrained = model_cfg.get('PRETRAINED', None)
     modals = cfg['DATASET']['MODALS']
+    embed_dim = model_cfg.get('EMBED_DIM', 256)
+    aux_in_chans = model_cfg.get('AUX_IN_CHANS', 3)
+    activation_checkpoint = model_cfg.get('ACTIVATION_CHECKPOINT', False)
 
     model = CMNeXt(
         backbone=backbone,
         num_classes=num_classes,
         modals=modals,
-        pretrained=pretrained
+        pretrained=pretrained,
+        embed_dim=embed_dim,
+        aux_in_chans=aux_in_chans,
+        activation_checkpoint=activation_checkpoint,
     )
 
     return model

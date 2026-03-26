@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
+from torch.utils.checkpoint import checkpoint
 
 
 class DWConv(nn.Module):
@@ -178,11 +179,12 @@ class MixVisionTransformer(nn.Module):
     def __init__(self, img_size=1024, in_chans=3, num_classes=1000, embed_dims=[64, 128, 320, 512],
                  num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm,
-                 depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1]):
+                 depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1], use_checkpoint=False):
         super().__init__()
         self.num_classes = num_classes
         self.depths = depths
         self.embed_dims = embed_dims
+        self.use_checkpoint = use_checkpoint
 
         # Patch Embeddings
         self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4,
@@ -230,6 +232,18 @@ class MixVisionTransformer(nn.Module):
             for i in range(depths[3])])
         self.norm4 = norm_layer(embed_dims[3])
 
+    def _should_checkpoint(self, x):
+        return self.use_checkpoint and self.training and x.requires_grad
+
+    def _run_block(self, block, x, H, W):
+        if not self._should_checkpoint(x):
+            return block(x, H, W)
+
+        def custom_forward(inp, module=block, height=H, width=W):
+            return module(inp, height, width)
+
+        return checkpoint(custom_forward, x, use_reentrant=False)
+
     def forward_features(self, x):
         """Extract multi-scale features from input."""
         B = x.shape[0]
@@ -238,7 +252,7 @@ class MixVisionTransformer(nn.Module):
         # Stage 1
         x, H, W = self.patch_embed1(x)
         for blk in self.block1:
-            x = blk(x, H, W)
+            x = self._run_block(blk, x, H, W)
         x = self.norm1(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)
@@ -246,7 +260,7 @@ class MixVisionTransformer(nn.Module):
         # Stage 2
         x, H, W = self.patch_embed2(x)
         for blk in self.block2:
-            x = blk(x, H, W)
+            x = self._run_block(blk, x, H, W)
         x = self.norm2(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)
@@ -254,7 +268,7 @@ class MixVisionTransformer(nn.Module):
         # Stage 3
         x, H, W = self.patch_embed3(x)
         for blk in self.block3:
-            x = blk(x, H, W)
+            x = self._run_block(blk, x, H, W)
         x = self.norm3(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)
@@ -262,7 +276,7 @@ class MixVisionTransformer(nn.Module):
         # Stage 4
         x, H, W = self.patch_embed4(x)
         for blk in self.block4:
-            x = blk(x, H, W)
+            x = self._run_block(blk, x, H, W)
         x = self.norm4(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)

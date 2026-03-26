@@ -25,6 +25,7 @@ MODEL:
   NUM_CLASSES: 19            # 19 classes (remapped)
   EMBED_DIM: 768             # Decoder embedding dimension
   AUX_IN_CHANS: 3            # Input channels for aux modality (3=stacked HAG for backward compat)
+  ACTIVATION_CHECKPOINT: true  # Trade extra compute for lower VRAM during training
 
 # -------------------------------------------------------------------------
 # DATASET CONFIG

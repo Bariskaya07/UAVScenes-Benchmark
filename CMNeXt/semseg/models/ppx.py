@@ -18,6 +18,14 @@ Output strides: [4, 8, 16, 32]
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
+
+
+def _bn_checkpoint_safe(module):
+    for submodule in module.modules():
+        if isinstance(submodule, nn.BatchNorm2d) and submodule.training:
+            return False
+    return True
 
 
 class SEBlock(nn.Module):
@@ -31,7 +39,7 @@ class SEBlock(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Linear(dim, dim // reduction, bias=False),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Linear(dim // reduction, dim, bias=False),
             nn.Sigmoid()
         )
@@ -138,8 +146,9 @@ class PPXStage(nn.Module):
         num_blocks: Number of PPX blocks in this stage
         stride: Downsampling stride (4 for stage 1, 2 for others)
     """
-    def __init__(self, in_channels, out_channels, num_blocks, stride=2):
+    def __init__(self, in_channels, out_channels, num_blocks, stride=2, use_checkpoint=False):
         super().__init__()
+        self.use_checkpoint = use_checkpoint
 
         # Patch Embedding / Downsampling
         # Stage 1: stride=4 (Conv 7x7, stride=4)
@@ -156,13 +165,27 @@ class PPXStage(nn.Module):
             )
 
         # PPX Blocks (maintain spatial resolution within stage)
-        self.blocks = nn.Sequential(*[
+        self.blocks = nn.ModuleList([
             PPXBlock(out_channels) for _ in range(num_blocks)
         ])
 
+    def _should_checkpoint(self, x, block):
+        return (
+            self.use_checkpoint
+            and self.training
+            and x.requires_grad
+            and _bn_checkpoint_safe(block)
+        )
+
     def forward(self, x):
         x = self.downsample(x)
-        x = self.blocks(x)
+        for block in self.blocks:
+            if self._should_checkpoint(x, block):
+                def custom_forward(inp, module=block):
+                    return module(inp)
+                x = checkpoint(custom_forward, x, use_reentrant=False)
+            else:
+                x = block(x)
         return x
 
 
@@ -188,22 +211,23 @@ class PPXEncoder(nn.Module):
         dropout: Dropout rate (default: 0.0)
     """
     def __init__(self, in_chans=3, embed_dims=[64, 128, 320, 512],
-                 num_blocks=[3, 4, 6, 3], dropout=0.0):
+                 num_blocks=[3, 4, 6, 3], dropout=0.0, use_checkpoint=False):
         super().__init__()
 
         self.embed_dims = embed_dims
+        self.use_checkpoint = use_checkpoint
 
         # Stage 1: Input -> 64 channels, stride 4
-        self.stage1 = PPXStage(in_chans, embed_dims[0], num_blocks[0], stride=4)
+        self.stage1 = PPXStage(in_chans, embed_dims[0], num_blocks[0], stride=4, use_checkpoint=use_checkpoint)
 
         # Stage 2: 64 -> 128 channels, stride 2 (total stride 8)
-        self.stage2 = PPXStage(embed_dims[0], embed_dims[1], num_blocks[1], stride=2)
+        self.stage2 = PPXStage(embed_dims[0], embed_dims[1], num_blocks[1], stride=2, use_checkpoint=use_checkpoint)
 
         # Stage 3: 128 -> 320 channels, stride 2 (total stride 16)
-        self.stage3 = PPXStage(embed_dims[1], embed_dims[2], num_blocks[2], stride=2)
+        self.stage3 = PPXStage(embed_dims[1], embed_dims[2], num_blocks[2], stride=2, use_checkpoint=use_checkpoint)
 
         # Stage 4: 320 -> 512 channels, stride 2 (total stride 32)
-        self.stage4 = PPXStage(embed_dims[2], embed_dims[3], num_blocks[3], stride=2)
+        self.stage4 = PPXStage(embed_dims[2], embed_dims[3], num_blocks[3], stride=2, use_checkpoint=use_checkpoint)
 
         # Initialize weights
         self.apply(self._init_weights)

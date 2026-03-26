@@ -12,11 +12,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
+from torch.utils.checkpoint import checkpoint
 
 from .backbones.mit import (
     MixVisionTransformer, mit_b0, mit_b1, mit_b2, mit_b3, mit_b4, mit_b5
 )
 from .ppx import PPXEncoder, ppx_encoder_b2
+
+
+def _bn_checkpoint_safe(module):
+    for submodule in module.modules():
+        if isinstance(submodule, nn.BatchNorm2d) and submodule.training:
+            return False
+    return True
 
 
 class ConvModule(nn.Module):
@@ -42,7 +50,7 @@ class FeatureRectifyModule(nn.Module):
         self.channel_attention = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(dim, dim // reduction, 1),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Conv2d(dim // reduction, dim, 1),
             nn.Sigmoid()
         )
@@ -169,7 +177,7 @@ class Hub2FuseBlock(nn.Module):
         self.enhance = nn.Sequential(
             nn.Conv2d(dim, dim, 3, 1, 1),
             nn.BatchNorm2d(dim),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=False)
         )
 
     def forward(self, hub_feat, aux_feat):
@@ -273,11 +281,12 @@ class CMNeXt(nn.Module):
         pretrained: Path to pretrained backbone weights (only for RGB branch)
     """
     def __init__(self, backbone='mit_b2', num_classes=19, modals=['img', 'hag'],
-                 pretrained=None, embed_dim=256, aux_in_chans=3):
+                 pretrained=None, embed_dim=256, aux_in_chans=3, activation_checkpoint=False):
         super().__init__()
         self.modals = modals
         self.num_classes = num_classes
         self.aux_in_chans = aux_in_chans
+        self.activation_checkpoint = activation_checkpoint
 
         # Backbone factory
         backbone_factory = {
@@ -296,12 +305,12 @@ class CMNeXt(nn.Module):
             in_channels = [64, 128, 320, 512]
 
         # Hub backbone (RGB) - ImageNet pretrained
-        self.hub_backbone = backbone_factory[backbone]()
+        self.hub_backbone = backbone_factory[backbone](use_checkpoint=activation_checkpoint)
 
         # Auxiliary encoder (HAG) - PPX with random init (paper-compliant)
         # aux_in_chans: 1 for UAVScenes HAG, 2 for DELIVER LiDAR, 3 for backward compat
         if len(modals) > 1:
-            self.aux_encoder = ppx_encoder_b2(in_chans=aux_in_chans)
+            self.aux_encoder = ppx_encoder_b2(in_chans=aux_in_chans, use_checkpoint=activation_checkpoint)
             print(f"[CMNeXt] Auxiliary encoder input channels: {aux_in_chans}")
 
             # Spatial reduction ratios for memory-efficient attention
@@ -325,6 +334,26 @@ class CMNeXt(nn.Module):
         # Load pretrained weights
         if pretrained is not None:
             self.load_pretrained(pretrained)
+
+        if self.activation_checkpoint:
+            print("[CMNeXt] Activation checkpointing enabled")
+
+    def _should_checkpoint_module(self, module, *inputs):
+        return (
+            self.activation_checkpoint
+            and self.training
+            and all(inp.requires_grad for inp in inputs)
+            and _bn_checkpoint_safe(module)
+        )
+
+    def _run_module(self, module, *inputs):
+        if not self._should_checkpoint_module(module, *inputs):
+            return module(*inputs)
+
+        def custom_forward(*tensor_inputs, wrapped_module=module):
+            return wrapped_module(*tensor_inputs)
+
+        return checkpoint(custom_forward, *inputs, use_reentrant=False)
 
     def load_pretrained(self, pretrained_path):
         """Load pretrained backbone weights (only for RGB hub backbone).
@@ -373,7 +402,7 @@ class CMNeXt(nn.Module):
             # Fuse at each scale
             fused_features = []
             for i, (hub_f, aux_f, fuse_block) in enumerate(zip(hub_features, aux_features, self.fuse_blocks)):
-                fused = fuse_block(hub_f, aux_f)
+                fused = self._run_module(fuse_block, hub_f, aux_f)
                 fused_features.append(fused)
         else:
             fused_features = hub_features
