@@ -173,6 +173,24 @@ def build_dataloaders(cfg):
         hag_max_height=cfg.hag.max_meters
     )
 
+    dataset_root = cfg.dataset.data_path
+    expected_roots = [
+        os.path.join(dataset_root, "interval5_CAM_LIDAR", "interval5_CAM_LIDAR"),
+        os.path.join(dataset_root, "interval5_CAM_label", "interval5_CAM_label"),
+        os.path.join(dataset_root, "interval5_HAG_CSF"),
+    ]
+    missing_roots = [path for path in expected_roots if not os.path.exists(path)]
+    if missing_roots or len(train_dataset) == 0 or len(val_dataset) == 0 or len(test_dataset) == 0:
+        missing_msg = "\n".join(f"  - {path}" for path in missing_roots) if missing_roots else "  - none"
+        raise ValueError(
+            "TokenFusion found zero UAVScenes samples. "
+            f"dataset.data_path resolves to: {dataset_root}\n"
+            "Expected dataset roots:\n"
+            f"{missing_msg}\n"
+            "If you are on a VM, create the symlink:\n"
+            "  ln -sfn ~/thesis-uavscenes/uavscenes007/uavscenes-cmnext/UAVScenesData/UAVScenesData data/UAVScenes"
+        )
+
     # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
