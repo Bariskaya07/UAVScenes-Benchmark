@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
+from torch.utils.checkpoint import checkpoint
 
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from ..net_utils import FeatureFusionModule as FFM
@@ -226,10 +227,11 @@ class RGBXTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dims=[64, 128, 256, 512], 
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, drop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, norm_fuse=nn.BatchNorm2d,
-                 depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1]):
+                 depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1], use_checkpoint=False):
         super().__init__()
         self.num_classes = num_classes
         self.depths = depths
+        self.use_checkpoint = bool(use_checkpoint)
 
         # patch_embed
         self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4, in_chans=in_chans,
@@ -352,6 +354,29 @@ class RGBXTransformer(nn.Module):
         else:
             raise TypeError('pretrained must be a str or None')
 
+    def _should_checkpoint(self, *tensors):
+        if not (self.use_checkpoint and self.training and torch.is_grad_enabled()):
+            return False
+        return any(tensor.requires_grad for tensor in tensors if torch.is_tensor(tensor))
+
+    def _run_block(self, block, x, H, W):
+        if not self._should_checkpoint(x):
+            return block(x, H, W)
+
+        def custom_forward(inp, module=block, height=H, width=W):
+            return module(inp, height, width)
+
+        return checkpoint(custom_forward, x, use_reentrant=False)
+
+    def _run_pair_module(self, module, x1, x2):
+        if not self._should_checkpoint(x1, x2):
+            return module(x1, x2)
+
+        def custom_forward(inp1, inp2, current_module=module):
+            return current_module(inp1, inp2)
+
+        return checkpoint(custom_forward, x1, x2, use_reentrant=False)
+
     def forward_features(self, x_rgb, x_e):
         """
         x_rgb: B x N x H x W
@@ -365,16 +390,16 @@ class RGBXTransformer(nn.Module):
         # B H*W/16 C
         x_e, _, _ = self.extra_patch_embed1(x_e)
         for i, blk in enumerate(self.block1):
-            x_rgb = blk(x_rgb, H, W)
+            x_rgb = self._run_block(blk, x_rgb, H, W)
         for i, blk in enumerate(self.extra_block1):
-            x_e = blk(x_e, H, W)
+            x_e = self._run_block(blk, x_e, H, W)
         x_rgb = self.norm1(x_rgb)
         x_e = self.extra_norm1(x_e)
 
         x_rgb = x_rgb.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        x_rgb, x_e = self.FRMs[0](x_rgb, x_e)
-        x_fused = self.FFMs[0](x_rgb, x_e)
+        x_rgb, x_e = self._run_pair_module(self.FRMs[0], x_rgb, x_e)
+        x_fused = self._run_pair_module(self.FFMs[0], x_rgb, x_e)
         outs.append(x_fused)
         
 
@@ -382,16 +407,16 @@ class RGBXTransformer(nn.Module):
         x_rgb, H, W = self.patch_embed2(x_rgb)
         x_e, _, _ = self.extra_patch_embed2(x_e)
         for i, blk in enumerate(self.block2):
-            x_rgb = blk(x_rgb, H, W)
+            x_rgb = self._run_block(blk, x_rgb, H, W)
         for i, blk in enumerate(self.extra_block2):
-            x_e = blk(x_e, H, W)
+            x_e = self._run_block(blk, x_e, H, W)
         x_rgb = self.norm2(x_rgb)
         x_e = self.extra_norm2(x_e)
 
         x_rgb = x_rgb.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        x_rgb, x_e = self.FRMs[1](x_rgb, x_e)
-        x_fused = self.FFMs[1](x_rgb, x_e)
+        x_rgb, x_e = self._run_pair_module(self.FRMs[1], x_rgb, x_e)
+        x_fused = self._run_pair_module(self.FFMs[1], x_rgb, x_e)
         outs.append(x_fused)
         
 
@@ -399,16 +424,16 @@ class RGBXTransformer(nn.Module):
         x_rgb, H, W = self.patch_embed3(x_rgb)
         x_e, _, _ = self.extra_patch_embed3(x_e)
         for i, blk in enumerate(self.block3):
-            x_rgb = blk(x_rgb, H, W)
+            x_rgb = self._run_block(blk, x_rgb, H, W)
         for i, blk in enumerate(self.extra_block3):
-            x_e = blk(x_e, H, W)
+            x_e = self._run_block(blk, x_e, H, W)
         x_rgb = self.norm3(x_rgb)
         x_e = self.extra_norm3(x_e)
 
         x_rgb = x_rgb.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        x_rgb, x_e = self.FRMs[2](x_rgb, x_e)
-        x_fused = self.FFMs[2](x_rgb, x_e)
+        x_rgb, x_e = self._run_pair_module(self.FRMs[2], x_rgb, x_e)
+        x_fused = self._run_pair_module(self.FFMs[2], x_rgb, x_e)
         outs.append(x_fused)
         
 
@@ -416,16 +441,16 @@ class RGBXTransformer(nn.Module):
         x_rgb, H, W = self.patch_embed4(x_rgb)
         x_e, _, _ = self.extra_patch_embed4(x_e)
         for i, blk in enumerate(self.block4):
-            x_rgb = blk(x_rgb, H, W)
+            x_rgb = self._run_block(blk, x_rgb, H, W)
         for i, blk in enumerate(self.extra_block4):
-            x_e = blk(x_e, H, W)
+            x_e = self._run_block(blk, x_e, H, W)
         x_rgb = self.norm4(x_rgb)
         x_e = self.extra_norm4(x_e)
 
         x_rgb = x_rgb.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         x_e = x_e.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        x_rgb, x_e = self.FRMs[3](x_rgb, x_e)
-        x_fused = self.FFMs[3](x_rgb, x_e)
+        x_rgb, x_e = self._run_pair_module(self.FRMs[3], x_rgb, x_e)
+        x_fused = self._run_pair_module(self.FFMs[3], x_rgb, x_e)
         outs.append(x_fused)
         
         return outs
@@ -474,7 +499,7 @@ class mit_b0(RGBXTransformer):
         super(mit_b0, self).__init__(
             patch_size=4, embed_dims=[32, 64, 160, 256], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1)
+            drop_rate=0.0, drop_path_rate=0.1, **kwargs)
 
 
 class mit_b1(RGBXTransformer):
@@ -482,7 +507,7 @@ class mit_b1(RGBXTransformer):
         super(mit_b1, self).__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1)
+            drop_rate=0.0, drop_path_rate=0.1, **kwargs)
 
 
 class mit_b2(RGBXTransformer):
@@ -490,7 +515,7 @@ class mit_b2(RGBXTransformer):
         super(mit_b2, self).__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1)
+            drop_rate=0.0, drop_path_rate=0.1, **kwargs)
 
 
 class mit_b3(RGBXTransformer):
@@ -498,7 +523,7 @@ class mit_b3(RGBXTransformer):
         super(mit_b3, self).__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 18, 3], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1)
+            drop_rate=0.0, drop_path_rate=0.1, **kwargs)
 
 
 class mit_b4(RGBXTransformer):
@@ -506,7 +531,7 @@ class mit_b4(RGBXTransformer):
         super(mit_b4, self).__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 8, 27, 3], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1)
+            drop_rate=0.0, drop_path_rate=0.1, **kwargs)
 
 
 class mit_b5(RGBXTransformer):
@@ -514,4 +539,4 @@ class mit_b5(RGBXTransformer):
         super(mit_b5, self).__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 6, 40, 3], sr_ratios=[8, 4, 2, 1],
-            drop_rate=0.0, drop_path_rate=0.1)
+            drop_rate=0.0, drop_path_rate=0.1, **kwargs)

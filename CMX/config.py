@@ -80,6 +80,7 @@ C.gaussian_blur_prob = 0.2
 C.gaussian_blur_kernel = 3
 C.freeze_bn = True
 C.amp_dtype = 'bf16'  # 'bf16' for stability on A100, set to 'fp16' to revert precision behavior
+C.activation_checkpoint = True  # Trade extra compute for lower VRAM during training
 
 C.fix_bias = True
 C.bn_eps = 1e-3

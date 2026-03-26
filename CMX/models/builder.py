@@ -29,28 +29,46 @@ class EncoderDecoder(nn.Module):
         elif cfg.backbone == 'mit_b5':
             logger.info('Using backbone: Segformer-B5')
             from .encoders.dual_segformer import mit_b5 as backbone
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone(
+                norm_fuse=norm_layer,
+                use_checkpoint=getattr(cfg, 'activation_checkpoint', False),
+            )
         elif cfg.backbone == 'mit_b4':
             logger.info('Using backbone: Segformer-B4')
             from .encoders.dual_segformer import mit_b4 as backbone
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone(
+                norm_fuse=norm_layer,
+                use_checkpoint=getattr(cfg, 'activation_checkpoint', False),
+            )
         elif cfg.backbone == 'mit_b2':
             logger.info('Using backbone: Segformer-B2')
             from .encoders.dual_segformer import mit_b2 as backbone
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone(
+                norm_fuse=norm_layer,
+                use_checkpoint=getattr(cfg, 'activation_checkpoint', False),
+            )
         elif cfg.backbone == 'mit_b1':
             logger.info('Using backbone: Segformer-B1')
             from .encoders.dual_segformer import mit_b0 as backbone
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone(
+                norm_fuse=norm_layer,
+                use_checkpoint=getattr(cfg, 'activation_checkpoint', False),
+            )
         elif cfg.backbone == 'mit_b0':
             logger.info('Using backbone: Segformer-B0')
             self.channels = [32, 64, 160, 256]
             from .encoders.dual_segformer import mit_b0 as backbone
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone(
+                norm_fuse=norm_layer,
+                use_checkpoint=getattr(cfg, 'activation_checkpoint', False),
+            )
         else:
             logger.info('Using backbone: Segformer-B2')
             from .encoders.dual_segformer import mit_b2 as backbone
-            self.backbone = backbone(norm_fuse=norm_layer)
+            self.backbone = backbone(
+                norm_fuse=norm_layer,
+                use_checkpoint=getattr(cfg, 'activation_checkpoint', False),
+            )
 
         self.aux_head = None
 
