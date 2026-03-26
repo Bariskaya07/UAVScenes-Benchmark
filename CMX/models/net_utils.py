@@ -14,7 +14,7 @@ class ChannelWeights(nn.Module):
         self.max_pool = nn.AdaptiveMaxPool2d(1)
         self.mlp = nn.Sequential(
                     nn.Linear(self.dim * 4, self.dim * 4 // reduction),
-                    nn.ReLU(inplace=True),
+                    nn.ReLU(inplace=False),
                     nn.Linear(self.dim * 4 // reduction, self.dim * 2), 
                     nn.Sigmoid())
 
@@ -35,7 +35,7 @@ class SpatialWeights(nn.Module):
         self.dim = dim
         self.mlp = nn.Sequential(
                     nn.Conv2d(self.dim * 2, self.dim // reduction, kernel_size=1),
-                    nn.ReLU(inplace=True),
+                    nn.ReLU(inplace=False),
                     nn.Conv2d(self.dim // reduction, 2, kernel_size=1), 
                     nn.Sigmoid())
 
@@ -113,8 +113,8 @@ class CrossPath(nn.Module):
         super().__init__()
         self.channel_proj1 = nn.Linear(dim, dim // reduction * 2)
         self.channel_proj2 = nn.Linear(dim, dim // reduction * 2)
-        self.act1 = nn.ReLU(inplace=True)
-        self.act2 = nn.ReLU(inplace=True)
+        self.act1 = nn.ReLU(inplace=False)
+        self.act2 = nn.ReLU(inplace=False)
         self.cross_attn = CrossAttention(dim // reduction, num_heads=num_heads)
         self.end_proj1 = nn.Linear(dim // reduction * 2, dim)
         self.end_proj2 = nn.Linear(dim // reduction * 2, dim)
@@ -141,7 +141,7 @@ class ChannelEmbed(nn.Module):
         self.channel_embed = nn.Sequential(
                         nn.Conv2d(in_channels, out_channels//reduction, kernel_size=1, bias=True),
                         nn.Conv2d(out_channels//reduction, out_channels//reduction, kernel_size=3, stride=1, padding=1, bias=True, groups=out_channels//reduction),
-                        nn.ReLU(inplace=True),
+                        nn.ReLU(inplace=False),
                         nn.Conv2d(out_channels//reduction, out_channels, kernel_size=1, bias=True),
                         norm_layer(out_channels) 
                         )
