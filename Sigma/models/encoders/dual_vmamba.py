@@ -38,7 +38,6 @@ class RGBXTransformer(nn.Module):
         
         self.ape = ape
         self.use_checkpoint = bool(kwargs.get("use_checkpoint", False))
-        self.fusion_use_checkpoint = bool(kwargs.get("fusion_use_checkpoint", self.use_checkpoint))
 
         self.vssm = Backbone_VSSM(
             pretrained=pretrained,
@@ -57,7 +56,7 @@ class RGBXTransformer(nn.Module):
                 hidden_dim=dims * (2 ** i),
                 mlp_ratio=0.0,
                 d_state=4,
-                use_checkpoint=self.fusion_use_checkpoint,
+                use_checkpoint=self.use_checkpoint,
             ) for i in range(4)
         )
         self.channel_attn_mamba = nn.ModuleList(
@@ -65,7 +64,7 @@ class RGBXTransformer(nn.Module):
                 hidden_dim=dims * (2 ** i),
                 mlp_ratio=0.0,
                 d_state=4,
-                use_checkpoint=self.fusion_use_checkpoint,
+                use_checkpoint=self.use_checkpoint,
             ) for i in range(4)
         )
         

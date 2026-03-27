@@ -175,12 +175,7 @@ with Engine(custom_parser=parser) as engine:
         schedule_power,
         schedule_warmup_ratio,
     )
-    logger.info(
-        "Activation checkpointing: backbone=%s fusion=%s decoder=%s",
-        bool(getattr(config, 'backbone_activation_checkpoint', getattr(config, 'activation_checkpoint', False))),
-        bool(getattr(config, 'fusion_activation_checkpoint', getattr(config, 'activation_checkpoint', False))),
-        bool(getattr(config, 'decoder_activation_checkpoint', getattr(config, 'activation_checkpoint', False))),
-    )
+    logger.info("Activation checkpointing: %s", bool(getattr(config, 'activation_checkpoint', False)))
     lr_policy = WarmUpPolyLR(
         start_lr=base_lr,
         lr_power=schedule_power,

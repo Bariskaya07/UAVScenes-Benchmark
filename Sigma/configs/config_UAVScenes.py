@@ -119,9 +119,6 @@ C.niters_per_epoch = None  # Determined at runtime: len(train_loader)
 C.num_workers = 8
 C.amp = False         # Keep Sigma training in FP32 for UAVScenes
 C.activation_checkpoint = True  # Enable built-in VMamba/MambaDecoder checkpointing for VRAM reduction
-C.backbone_activation_checkpoint = True
-C.fusion_activation_checkpoint = False
-C.decoder_activation_checkpoint = False
 
 # Augmentation (Standardized with CMNeXt for fair comparison)
 C.train_scale_array = [0.5, 2.0]  # Continuous random resize range
