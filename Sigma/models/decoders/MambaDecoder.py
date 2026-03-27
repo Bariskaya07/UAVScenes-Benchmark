@@ -139,10 +139,10 @@ class Mamba_up(nn.Module):
 
     def forward(self, x):
         for blk in self.blocks:
-            # CVSSDecoderBlock already handles its own activation checkpointing.
-            # Wrapping the whole block again here causes redundant nested
-            # recomputation and a large training-time slowdown.
-            x = blk(x)
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(blk, x, use_reentrant=False)
+            else:
+                x = blk(x)
         if self.upsample is not None:
             x = self.upsample(x)
         return x
