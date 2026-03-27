@@ -119,10 +119,11 @@ class Engine(object):
         ensure_dir(checkpoint_dir)
         if not osp.exists(log_dir_link):
             link_file(log_dir, log_dir_link)
-        current_epoch_checkpoint = osp.join(checkpoint_dir, 'epoch-{}.pth'.format(
-            self.state.epoch))
+        current_epoch_checkpoint = osp.join(
+            checkpoint_dir, 'cmx_epoch_{}.pth'.format(self.state.epoch)
+        )
         self.save_checkpoint(current_epoch_checkpoint)
-        last_epoch_checkpoint = osp.join(checkpoint_dir, 'epoch-last.pth')
+        last_epoch_checkpoint = osp.join(checkpoint_dir, 'last.pth')
         link_file(current_epoch_checkpoint, last_epoch_checkpoint)
 
 

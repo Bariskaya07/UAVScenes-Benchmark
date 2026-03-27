@@ -1,5 +1,6 @@
 import os
 import os.path as osp
+import re
 import cv2
 import numpy as np
 import time
@@ -14,6 +15,9 @@ from utils.pyt_utils import load_model, link_file, ensure_dir
 from utils.transforms import pad_image_to_shape, normalize
 
 logger = get_logger()
+
+NEW_EPOCH_CKPT_PATTERN = re.compile(r"^cmx_epoch_(\d+)\.pth$")
+LEGACY_EPOCH_CKPT_PATTERN = re.compile(r"^epoch-(\d+)\.pth$")
 
 
 class Evaluator(object):
@@ -52,31 +56,9 @@ class Evaluator(object):
         elif "-" in model_indice:
             start_epoch = int(model_indice.split("-")[0])
             end_epoch = model_indice.split("-")[1]
-
-            models = os.listdir(model_path)
-            models.remove("epoch-last.pth")
-            sorted_models = [None] * len(models)
-            model_idx = [0] * len(models)
-
-            for idx, m in enumerate(models):
-                num = m.split(".")[0].split("-")[1]
-                model_idx[idx] = num
-                sorted_models[idx] = m
-            model_idx = np.array([int(i) for i in model_idx])
-
-            down_bound = model_idx >= start_epoch
-            up_bound = [True] * len(sorted_models)
-            if end_epoch:
-                end_epoch = int(end_epoch)
-                assert start_epoch < end_epoch
-                up_bound = model_idx <= end_epoch
-            bound = up_bound * down_bound
-            model_slice = np.array(sorted_models)[bound]
-            models = [os.path.join(model_path, model) for model in
-                      model_slice]
+            models = self._resolve_epoch_range_models(model_path, start_epoch, end_epoch)
         else:
-            models = [os.path.join(model_path,
-                                   'epoch-%s.pth' % model_indice), ]
+            models = [self._resolve_single_model_path(model_path, model_indice)]
 
         results = open(log_file, 'a')
         link_file(log_file, log_file_link)
@@ -92,6 +74,40 @@ class Evaluator(object):
             results.flush()
 
         results.close()
+
+    @staticmethod
+    def _resolve_epoch_range_models(model_path, start_epoch, end_epoch):
+        candidates = []
+        for filename in os.listdir(model_path):
+            match = NEW_EPOCH_CKPT_PATTERN.match(filename) or LEGACY_EPOCH_CKPT_PATTERN.match(filename)
+            if not match:
+                continue
+            epoch = int(match.group(1))
+            if epoch < start_epoch:
+                continue
+            if end_epoch:
+                end_epoch = int(end_epoch)
+                assert start_epoch < end_epoch
+                if epoch > end_epoch:
+                    continue
+            candidates.append((epoch, os.path.join(model_path, filename)))
+        candidates.sort(key=lambda item: item[0])
+        return [path for _, path in candidates]
+
+    @staticmethod
+    def _resolve_single_model_path(model_path, model_indice):
+        if model_indice == 'last':
+            preferred = os.path.join(model_path, 'last.pth')
+            legacy = os.path.join(model_path, 'epoch-last.pth')
+            return preferred if os.path.exists(preferred) else legacy
+        if model_indice == 'best':
+            preferred = os.path.join(model_path, 'best.pth')
+            legacy = os.path.join(model_path, 'epoch-best.pth')
+            return preferred if os.path.exists(preferred) else legacy
+
+        preferred = os.path.join(model_path, f'cmx_epoch_{model_indice}.pth')
+        legacy = os.path.join(model_path, f'epoch-{model_indice}.pth')
+        return preferred if os.path.exists(preferred) else legacy
 
     def multi_process_evaluation(self):
         start_eval_time = time.perf_counter()

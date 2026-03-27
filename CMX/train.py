@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import random
-import shutil
 import argparse
 from tqdm import tqdm
 
@@ -27,11 +26,11 @@ from utils.init_func import init_weight
 from utils.lr_policy import WarmUpPolyLR
 from engine.engine import Engine
 from engine.logger import get_logger
-from utils.pyt_utils import all_reduce_tensor, ensure_dir
+from utils.pyt_utils import all_reduce_tensor, ensure_dir, link_file
 from utils.metric import hist_info, compute_score
 from utils.visualize import print_iou
 sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))
-from checkpoint_ops import materialize_epoch_checkpoint, promote_best_checkpoint, maybe_sync_checkpoint_dir
+from checkpoint_ops import epoch_checkpoint_name, promote_best_checkpoint, maybe_sync_checkpoint_dir
 
 from tensorboardX import SummaryWriter
 
@@ -430,9 +429,9 @@ with Engine(custom_parser=parser) as engine:
                 engine.save_and_link_checkpoint(config.checkpoint_dir,
                                                 config.log_dir,
                                                 config.log_dir_link)
-                epoch_ckpt = osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
-                if osp.exists(epoch_ckpt):
-                    materialize_epoch_checkpoint(epoch_ckpt, 'cmx', epoch)
+                epoch_ckpt = osp.join(
+                    config.checkpoint_dir, epoch_checkpoint_name('cmx', epoch)
+                )
 
                 # Use the network without DDP wrapper for evaluation
                 eval_model = model.module if engine.distributed else model
@@ -450,22 +449,12 @@ with Engine(custom_parser=parser) as engine:
 
                 # Save best checkpoint
                 if mean_IoU > best_miou:
-                    previous_best_epoch = best_epoch
                     best_miou = mean_IoU
                     best_epoch = epoch
-                    best_path = osp.join(config.checkpoint_dir, 'epoch-best.pth')
-                    best_epoch_path = osp.join(config.checkpoint_dir, f'epoch-{epoch}-best.pth')
-                    last_path = osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
-                    if osp.exists(last_path):
-                        if previous_best_epoch > 0:
-                            previous_best_path = osp.join(
-                                config.checkpoint_dir, f'epoch-{previous_best_epoch}-best.pth'
-                            )
-                            if osp.exists(previous_best_path):
-                                os.remove(previous_best_path)
-                        shutil.copy(last_path, best_epoch_path)
-                        shutil.copy(last_path, best_path)
-                        promote_best_checkpoint(last_path, 'cmx', epoch)
+                    best_path = osp.join(config.checkpoint_dir, 'best.pth')
+                    if osp.exists(epoch_ckpt):
+                        best_epoch_path = promote_best_checkpoint(epoch_ckpt, 'cmx', epoch)
+                        link_file(best_epoch_path, best_path)
                     logger.info(f'New best mIoU: {best_miou:.4f} at epoch {epoch}')
 
                 model.train()
