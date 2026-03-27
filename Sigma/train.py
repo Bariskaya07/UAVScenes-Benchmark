@@ -36,6 +36,8 @@ from engine.logger import get_logger
 from utils.metric import hist_info, compute_score
 from eval import SegEvaluator
 import shutil
+sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))
+from checkpoint_ops import materialize_epoch_checkpoint, promote_best_checkpoint, maybe_sync_checkpoint_dir
 
 from tensorboardX import SummaryWriter
 
@@ -388,8 +390,10 @@ with Engine(custom_parser=parser) as engine:
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if engine.distributed and (engine.local_rank == 0):
                 engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
+                materialize_epoch_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'), 'sigma', epoch)
             elif not engine.distributed:
                 engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
+                materialize_epoch_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'), 'sigma', epoch)
 
         # devices_val = [engine.local_rank] if engine.distributed else [0]
         torch.cuda.empty_cache()
@@ -412,6 +416,7 @@ with Engine(custom_parser=parser) as engine:
                             src_ckpt_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
                             if os.path.exists(src_ckpt_path):
                                 shutil.copy(src_ckpt_path, best_ckpt_path)
+                                promote_best_checkpoint(src_ckpt_path, 'sigma', epoch)
 
                     model.train()
                     apply_freeze_bn_if_needed(model)
@@ -431,6 +436,7 @@ with Engine(custom_parser=parser) as engine:
                         src_ckpt_path = os.path.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
                         if os.path.exists(src_ckpt_path):
                             shutil.copy(src_ckpt_path, best_ckpt_path)
+                            promote_best_checkpoint(src_ckpt_path, 'sigma', epoch)
                 model.train()
                 apply_freeze_bn_if_needed(model)
 
@@ -438,9 +444,12 @@ with Engine(custom_parser=parser) as engine:
     last_ckpt = os.path.join(config.checkpoint_dir, 'epoch-last.pth')
     if engine.distributed and engine.local_rank == 0:
         torch.save(model.module.state_dict(), last_ckpt)
+        logger.info(f"Saved last epoch checkpoint: {last_ckpt}")
+        maybe_sync_checkpoint_dir(config.checkpoint_dir, logger.info)
     elif not engine.distributed:
         torch.save(model.state_dict(), last_ckpt)
-    logger.info(f"Saved last epoch checkpoint: {last_ckpt}")
+        logger.info(f"Saved last epoch checkpoint: {last_ckpt}")
+        maybe_sync_checkpoint_dir(config.checkpoint_dir, logger.info)
 
     # Final evaluation on test set with slide mode
     logger.info("\n" + "=" * 60)

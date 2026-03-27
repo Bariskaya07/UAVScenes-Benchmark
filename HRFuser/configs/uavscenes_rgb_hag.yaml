@@ -116,7 +116,7 @@ evaluation:
 # ==============================================================================
 logging:
   log_dir: "logs"
-  checkpoint_dir: "checkpoints"
+  checkpoint_dir: "hrfuser_checkpoints"
   print_freq: 50
 
 # ==============================================================================

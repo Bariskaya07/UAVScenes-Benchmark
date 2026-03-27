@@ -178,7 +178,7 @@ evaluation:
 # ==============================================================================
 logging:
   log_dir: "logs"
-  checkpoint_dir: "checkpoints"
+  checkpoint_dir: "tokenfusion_checkpoints"
   tensorboard: true
 
   # Logging frequency

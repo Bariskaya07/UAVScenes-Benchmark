@@ -60,6 +60,7 @@ from utils.augmentations_mm import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shared_paths import resolve_pretrained_path
+from checkpoint_ops import materialize_epoch_checkpoint, promote_best_checkpoint, maybe_sync_checkpoint_dir
 
 
 # ---------------------------------------------------------------------------
@@ -911,8 +912,25 @@ def main():
 
         logger.info(f"Epoch {epoch + 1} train loss: {train_loss:.4f}")
 
+        val_this_epoch = (epoch + 1) % cfg.training.val_every == 0 or epoch == cfg.training.epochs - 1
+
         # Validate
-        if (epoch + 1) % cfg.training.val_every == 0 or epoch == cfg.training.epochs - 1:
+        if val_this_epoch:
+            epoch_ckpt_path = os.path.join(
+                cfg.logging.checkpoint_dir,
+                f'checkpoint_epoch_{epoch + 1}.pth'
+            )
+            if is_main:
+                save_checkpoint(
+                    {
+                        'epoch': epoch + 1,
+                        'model': raw_model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'best_miou': best_miou,
+                    },
+                    filename=epoch_ckpt_path
+                )
+                materialize_epoch_checkpoint(epoch_ckpt_path, 'hrfuser', epoch + 1)
             if is_main:
                 metrics = validate(raw_model, val_loader, cfg, device, logger)
                 current_miou = metrics['miou']
@@ -923,27 +941,21 @@ def main():
                     best_miou = current_miou
                     logger.info(f"New best mIoU: {best_miou:.2f}%")
 
-                # Save checkpoint
-                save_checkpoint(
-                    {
-                        'epoch': epoch + 1,
-                        'model': raw_model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'best_miou': best_miou,
-                        'metrics': {k: v.tolist() if isinstance(v, np.ndarray) else v
-                                    for k, v in metrics.items()},
-                    },
-                    filename=os.path.join(cfg.logging.checkpoint_dir,
-                                          f'checkpoint_epoch_{epoch + 1}.pth'),
-                    is_best=is_best,
-                    best_filename=os.path.join(cfg.logging.checkpoint_dir, 'best.pth')
-                )
+                if is_best:
+                    checkpoint = torch.load(epoch_ckpt_path, map_location='cpu', weights_only=False)
+                    checkpoint['metrics'] = {
+                        k: v.tolist() if isinstance(v, np.ndarray) else v
+                        for k, v in metrics.items()
+                    }
+                    checkpoint['best_miou'] = best_miou
+                    torch.save(checkpoint, os.path.join(cfg.logging.checkpoint_dir, 'best.pth'))
+                    promote_best_checkpoint(epoch_ckpt_path, 'hrfuser', epoch + 1)
 
             if distributed:
                 dist.barrier()
 
         # Regular checkpoint save
-        elif (epoch + 1) % cfg.training.save_every == 0:
+        elif (epoch + 1) % cfg.training.save_every == 0 and not val_this_epoch:
             if is_main:
                 save_checkpoint(
                     {
@@ -958,6 +970,8 @@ def main():
 
     total_time = (time.time() - training_start) / 60.0
     logger.info(f"\nTraining completed in {total_time:.1f} minutes!")
+    if is_main:
+        maybe_sync_checkpoint_dir(cfg.logging.checkpoint_dir, logger.info)
     logger.info(f"Best mIoU: {best_miou:.2f}%")
     cleanup_distributed(distributed)
 

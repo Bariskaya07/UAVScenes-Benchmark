@@ -30,6 +30,8 @@ from engine.logger import get_logger
 from utils.pyt_utils import all_reduce_tensor, ensure_dir
 from utils.metric import hist_info, compute_score
 from utils.visualize import print_iou
+sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))
+from checkpoint_ops import materialize_epoch_checkpoint, promote_best_checkpoint, maybe_sync_checkpoint_dir
 
 from tensorboardX import SummaryWriter
 
@@ -428,6 +430,9 @@ with Engine(custom_parser=parser) as engine:
                 engine.save_and_link_checkpoint(config.checkpoint_dir,
                                                 config.log_dir,
                                                 config.log_dir_link)
+                epoch_ckpt = osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
+                if osp.exists(epoch_ckpt):
+                    materialize_epoch_checkpoint(epoch_ckpt, 'cmx', epoch)
 
                 # Use the network without DDP wrapper for evaluation
                 eval_model = model.module if engine.distributed else model
@@ -460,10 +465,15 @@ with Engine(custom_parser=parser) as engine:
                                 os.remove(previous_best_path)
                         shutil.copy(last_path, best_epoch_path)
                         shutil.copy(last_path, best_path)
+                        promote_best_checkpoint(last_path, 'cmx', epoch)
                     logger.info(f'New best mIoU: {best_miou:.4f} at epoch {epoch}')
 
                 model.train()
                 apply_freeze_bn_if_needed(model)
 
     if is_main:
+        maybe_sync_checkpoint_dir(
+            config.checkpoint_dir,
+            logger=logger.info,
+        )
         logger.info(f'Training complete. Best mIoU: {best_miou:.4f}')

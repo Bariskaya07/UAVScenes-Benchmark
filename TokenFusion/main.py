@@ -38,6 +38,7 @@ from datasets import UAVScenesDataset
 from utils.transforms import TrainTransform, ValTransform, TestTransform
 from utils.optimizer import PolyWarmupAdamW, get_fair_param_groups
 from utils.metrics import ConfusionMatrix, print_metrics, UAVSCENES_CLASSES, UAVScenesMetrics
+from checkpoint_ops import materialize_epoch_checkpoint, promote_best_checkpoint, maybe_sync_checkpoint_dir
 from utils.helpers import (
     setup_logger, save_checkpoint, load_checkpoint,
     AverageMeter, set_seed, count_parameters, sliding_window_inference
@@ -555,8 +556,24 @@ def main():
             epoch + 1, device, scaler, logger
         )
 
+        val_this_epoch = (epoch + 1) % cfg.training.val_every == 0 or epoch == cfg.training.epochs - 1
+
         # Validate (use whole mode for fast validation during training)
-        if (epoch + 1) % cfg.training.val_every == 0 or epoch == cfg.training.epochs - 1:
+        if val_this_epoch:
+            epoch_ckpt_path = os.path.join(
+                cfg.logging.checkpoint_dir,
+                f'checkpoint_epoch_{epoch + 1}.pth'
+            )
+            save_checkpoint(
+                {
+                    'epoch': epoch + 1,
+                    'model': model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'best_miou': best_miou
+                },
+                filename=epoch_ckpt_path
+            )
+            materialize_epoch_checkpoint(epoch_ckpt_path, 'tokenfusion', epoch + 1)
             eval_mode = getattr(cfg.evaluation, 'val_mode', 'whole')
             metrics = validate(model, val_loader, cfg, device, logger, eval_mode=eval_mode)
             current_miou = metrics['miou']
@@ -567,22 +584,15 @@ def main():
                 best_miou = current_miou
                 logger.info(f"New best mIoU: {best_miou * 100:.2f}%")
 
-            # Save checkpoint
-            save_checkpoint(
-                {
-                    'epoch': epoch + 1,
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'best_miou': best_miou,
-                    'metrics': metrics
-                },
-                filename=os.path.join(cfg.logging.checkpoint_dir, f'checkpoint_epoch_{epoch + 1}.pth'),
-                is_best=is_best,
-                best_filename=os.path.join(cfg.logging.checkpoint_dir, 'best.pth')
-            )
+            if is_best:
+                checkpoint = torch.load(epoch_ckpt_path, map_location='cpu', weights_only=False)
+                checkpoint['best_miou'] = best_miou
+                checkpoint['metrics'] = metrics
+                torch.save(checkpoint, os.path.join(cfg.logging.checkpoint_dir, 'best.pth'))
+                promote_best_checkpoint(epoch_ckpt_path, 'tokenfusion', epoch + 1)
 
         # Regular checkpoint save
-        if (epoch + 1) % cfg.training.save_every == 0:
+        if (epoch + 1) % cfg.training.save_every == 0 and not val_this_epoch:
             save_checkpoint(
                 {
                     'epoch': epoch + 1,
@@ -594,6 +604,7 @@ def main():
             )
 
     logger.info(f"\nTraining completed!")
+    maybe_sync_checkpoint_dir(cfg.logging.checkpoint_dir, logger.info)
     logger.info(f"Best mIoU: {best_miou * 100:.2f}%")
 
     # Final evaluation on test set with slide mode

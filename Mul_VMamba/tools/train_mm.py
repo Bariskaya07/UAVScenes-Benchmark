@@ -29,6 +29,7 @@ warnings.filterwarnings("ignore")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT.parent))
 from shared_paths import resolve_pretrained_path
+from checkpoint_ops import epoch_checkpoint_name, promote_best_checkpoint, maybe_sync_checkpoint_dir
 
 
 def resolve_repo_path(path_str):
@@ -219,6 +220,15 @@ def main(cfg, gpu, save_dir):
 
         if ((epoch+1) % train_cfg['EVAL_INTERVAL'] == 0 and (epoch+1) >= train_cfg['EVAL_START']) or (epoch+1) == epochs:
             if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
+                epoch_ckpt = save_dir / epoch_checkpoint_name('mulvmamba', epoch + 1)
+                torch.save({
+                    'epoch': epoch + 1,
+                    'model_state_dict': model.module.state_dict() if train_cfg['DDP'] else model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': train_loss,
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'best_miou': best_mIoU,
+                }, epoch_ckpt)
                 # Get eval mode from config (default: whole for fast validation)
                 eval_mode = eval_cfg.get('MODE', 'whole')
                 sliding = (eval_mode == 'slide')
@@ -227,24 +237,9 @@ def main(cfg, gpu, save_dir):
                 writer.add_scalar('val/mIoU', miou, epoch)
 
                 if miou > best_mIoU:
-                    prev_best_ckp = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch{best_epoch}_{best_mIoU}_checkpoint.pth"
-                    prev_best = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch{best_epoch}_{best_mIoU}.pth"
-                    # if os.path.isfile(prev_best): os.remove(prev_best)
-                    if os.path.isfile(prev_best_ckp): os.remove(prev_best_ckp)
                     best_mIoU = miou
                     best_epoch = epoch+1
-                    cur_best_ckp = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch{best_epoch}_{best_mIoU}_checkpoint.pth"
-                    cur_best = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch{best_epoch}_{best_mIoU}.pth"
-                    torch.save(model.module.state_dict() if train_cfg['DDP'] else model.state_dict(), cur_best)
                     torch.save(model.module.state_dict() if train_cfg['DDP'] else model.state_dict(), save_dir / 'best.pth')
-                    # --- 
-                    torch.save({'epoch': best_epoch,
-                                'model_state_dict': model.module.state_dict() if train_cfg['DDP'] else model.state_dict(),
-                                'optimizer_state_dict': optimizer.state_dict(),
-                                'loss': train_loss,
-                                'scheduler_state_dict': scheduler.state_dict(),
-                                'best_miou': best_mIoU,
-                                }, cur_best_ckp)
                     torch.save({'epoch': best_epoch,
                                 'model_state_dict': model.module.state_dict() if train_cfg['DDP'] else model.state_dict(),
                                 'optimizer_state_dict': optimizer.state_dict(),
@@ -252,12 +247,13 @@ def main(cfg, gpu, save_dir):
                                 'scheduler_state_dict': scheduler.state_dict(),
                                 'best_miou': best_mIoU,
                                 }, save_dir / 'best_checkpoint.pth')
+                    promote_best_checkpoint(epoch_ckpt, 'mulvmamba', best_epoch)
                     logger.info(print_iou(epoch, ious, miou, acc, macc, class_names))
                 logger.info(f"Current epoch:{epoch} mIoU: {miou} Best mIoU: {best_mIoU}")
 
     if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
         # Save last epoch checkpoint
-        last_ckpt = save_dir / f"{model_cfg['NAME']}_{model_cfg['BACKBONE']}_{dataset_cfg['NAME']}_epoch_last.pth"
+        last_ckpt = save_dir / "mulvmamba_epoch_last.pth"
         torch.save(model.module.state_dict() if train_cfg['DDP'] else model.state_dict(), last_ckpt)
         logger.info(f"Saved last epoch checkpoint: {last_ckpt}")
         writer.close()
@@ -277,11 +273,8 @@ def main(cfg, gpu, save_dir):
         logger.info("="*60)
 
         # Load best model
-        best_ckpt_pattern = save_dir / f"*_epoch{best_epoch}_*_checkpoint.pth"
-        import glob
-        best_ckpts = glob.glob(str(best_ckpt_pattern))
-        if best_ckpts:
-            best_ckpt = best_ckpts[0]
+        best_ckpt = save_dir / 'best_checkpoint.pth'
+        if best_ckpt.exists():
             checkpoint = torch.load(best_ckpt, map_location=device, weights_only=False)
             if 'model_state_dict' in checkpoint:
                 model.load_state_dict(checkpoint['model_state_dict'])
@@ -338,6 +331,7 @@ def main(cfg, gpu, save_dir):
         # Save results to file
         results_dir = os.path.join(save_dir, 'results')
         test_metrics.save_results(results_dir, 'Mul_VMamba', avg_time_ms, fps, num_images, logger)
+        maybe_sync_checkpoint_dir(save_dir, logger.info)
 
 
 if __name__ == '__main__':
@@ -361,7 +355,11 @@ if __name__ == '__main__':
     else:
         exp_name = '_'.join([cfg['DATASET']['NAME'], model, modals])
 
-    save_dir = resolve_repo_path(cfg['SAVE_DIR']) / exp_name
+    checkpoint_dir_name = cfg.get('CHECKPOINT_DIR_NAME', '')
+    if checkpoint_dir_name:
+        save_dir = resolve_repo_path(checkpoint_dir_name)
+    else:
+        save_dir = resolve_repo_path(cfg['SAVE_DIR']) / exp_name
     resume_path = resolve_repo_path(cfg['MODEL']['RESUME']) if cfg['MODEL']['RESUME'] else None
     if resume_path and resume_path.is_file():
         save_dir = Path(os.path.dirname(resume_path))

@@ -63,6 +63,8 @@ except ImportError:
 from datasets.uavscenes import UAVScenesDataset
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(REPO_ROOT))
+from checkpoint_ops import epoch_checkpoint_name, promote_best_checkpoint, maybe_sync_checkpoint_dir
 
 
 def _is_main_process() -> bool:
@@ -280,7 +282,7 @@ def get_arguments():
     parser.add_argument(
         "-c",
         "--ckpt",
-        default="uavscenes_geminifusion",
+        default="geminifusion_checkpoints",
         type=str,
         metavar="PATH",
         help="Checkpoint directory name",
@@ -1185,7 +1187,7 @@ def main():
     gpu = setup_ddp()
 
     # Create checkpoint directory
-    ckpt_dir = os.path.join(REPO_ROOT, "ckpt", args.ckpt)
+    ckpt_dir = os.path.join(REPO_ROOT, args.ckpt)
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # Setup logger
@@ -1378,6 +1380,22 @@ def main():
         )
 
         if (epoch_current + 1) % args.val_every == 0:
+            next_epoch = epoch_current + 1
+            if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
+                state_to_save = _segmenter_state_dict_for_save(segmenter, args)
+            else:
+                state_to_save = _segmenter_state_dict_for_save(segmenter, args)
+            epoch_ckpt_payload = {
+                "segmenter": state_to_save,
+                "epoch_start": next_epoch,
+                "best_val": saver.best_val,
+            }
+            epoch_ckpt_path = os.path.join(
+                ckpt_dir,
+                epoch_checkpoint_name("geminifusion", next_epoch, ".pth.tar"),
+            )
+            if _is_main_process():
+                torch.save(epoch_ckpt_payload, epoch_ckpt_path)
             miou = validate(
                 segmenter,
                 args.input,
@@ -1389,23 +1407,15 @@ def main():
                 amp_dtype=amp_dtype,
                 progress_mode=args.val_progress,
             )
-            next_epoch = epoch_current + 1
-            if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
-                state_to_save = _segmenter_state_dict_for_save(segmenter, args)
-                if _is_main_process():
-                    saver.save(
-                        miou,
-                        {"segmenter": state_to_save, "epoch_start": next_epoch},
-                    )
-            else:
-                if _is_main_process():
-                    saver.save(
-                        miou,
-                        {
-                            "segmenter": _segmenter_state_dict_for_save(segmenter, args),
-                            "epoch_start": next_epoch,
-                        },
-                    )
+            if _is_main_process():
+                if miou > saver.best_val:
+                    saver.best_val = miou
+                    epoch_ckpt_payload["best_val"] = miou
+                    torch.save(epoch_ckpt_payload, os.path.join(ckpt_dir, "model-best.pth.tar"))
+                    promote_best_checkpoint(epoch_ckpt_path, "geminifusion", next_epoch)
+                else:
+                    epoch_ckpt_payload["best_val"] = saver.best_val
+                    torch.save(epoch_ckpt_payload, os.path.join(ckpt_dir, "checkpoint.pth.tar"))
 
     print_log(
         f"Training finished, time spent {(time.time() - start) / 60.0:.3f}min\n"
@@ -1501,6 +1511,7 @@ def main():
         output_root = args.output_dir if args.output_dir else ckpt_dir
         results_dir = os.path.join(output_root, 'results')
         test_metrics.save_results(results_dir, 'GeminiFusion', avg_time_ms, fps, num_images)
+        maybe_sync_checkpoint_dir(ckpt_dir, print_log)
 
     helpers.logger.close()
     cleanup_ddp()

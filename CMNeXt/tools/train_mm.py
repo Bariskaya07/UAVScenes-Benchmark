@@ -47,6 +47,7 @@ from semseg.optimizers import get_optimizer
 from semseg.scheduler import get_scheduler
 from semseg.metrics import UAVScenesMetrics, EarlyStopping
 from shared_paths import resolve_pretrained_path
+from checkpoint_ops import epoch_checkpoint_name, promote_best_checkpoint, maybe_sync_checkpoint_dir
 
 
 def parse_args():
@@ -464,8 +465,8 @@ def sliding_window_inference(model, inputs, cfg):
     return logits
 
 
-def save_checkpoint(model, optimizer, scheduler, epoch, miou, cfg, is_best=False):
-    """Save model checkpoint."""
+def save_epoch_checkpoint(model, optimizer, scheduler, epoch, cfg, miou=0.0):
+    """Save the just-finished epoch before validation starts."""
     save_dir = Path(cfg['SAVE_DIR'])
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -478,18 +479,10 @@ def save_checkpoint(model, optimizer, scheduler, epoch, miou, cfg, is_best=False
         'config': cfg
     }
 
-    # Save latest
     torch.save(checkpoint, save_dir / 'latest.pth')
-
-    # Save best
-    if is_best:
-        torch.save(checkpoint, save_dir / 'best.pth')
-        print(f"Saved best model with mIoU: {miou*100:.2f}%")
-
-    # Save periodic
-    save_interval = cfg.get('LOGGING', {}).get('SAVE_INTERVAL', 10)
-    if (epoch + 1) % save_interval == 0:
-        torch.save(checkpoint, save_dir / f'epoch_{epoch+1}.pth')
+    epoch_path = save_dir / epoch_checkpoint_name('cmnext', epoch + 1)
+    torch.save(checkpoint, epoch_path)
+    return epoch_path
 
 
 def main():
@@ -639,7 +632,10 @@ def main():
         writer.add_scalar('Epoch/Train_Loss', train_loss, epoch)
 
         # Evaluate on VALIDATION set (not test set!)
-        if epoch >= eval_start and (epoch - eval_start) % eval_interval == 0:
+        if (epoch + 1) >= eval_start and ((epoch + 1 - eval_start) % eval_interval == 0):
+            epoch_ckpt_path = save_epoch_checkpoint(
+                model, optimizer, scheduler, epoch, cfg, best_miou
+            )
             print("\nEvaluating on validation set...")
             results, metrics = evaluate(model, val_loader, device, cfg,
                                         num_classes=cfg['MODEL']['NUM_CLASSES'])
@@ -670,11 +666,14 @@ def main():
             for i, iou in enumerate(results['per_class_iou']):
                 writer.add_scalar(f'Val_Class_IoU/{UAVScenes.CLASSES[i]}', iou, epoch)
 
-            # Save checkpoint
             is_best = miou > best_miou
             if is_best:
                 best_miou = miou
-            save_checkpoint(model, optimizer, scheduler, epoch, miou, cfg, is_best)
+                checkpoint = torch.load(epoch_ckpt_path, map_location='cpu', weights_only=False)
+                checkpoint['miou'] = miou
+                torch.save(checkpoint, save_dir / 'best.pth')
+                promote_best_checkpoint(epoch_ckpt_path, 'cmnext', epoch + 1)
+                print(f"Saved best model with mIoU: {miou*100:.2f}%")
 
             # Early stopping
             if early_stopper is not None:
@@ -687,6 +686,7 @@ def main():
     print("\n" + "=" * 60)
     print("Training completed!")
     print("=" * 60)
+    maybe_sync_checkpoint_dir(save_dir)
 
     # Load best model and evaluate
     best_path = save_dir / 'best.pth'

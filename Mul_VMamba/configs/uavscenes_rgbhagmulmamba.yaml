@@ -14,6 +14,7 @@
 # -------------------------------------------------------------------------
 DEVICE          : cuda
 SAVE_DIR        : 'output/UAVScenes_MulVMamba'
+CHECKPOINT_DIR_NAME : 'mulvmamba_checkpoints'
 
 # -------------------------------------------------------------------------
 # MODEL CONFIG
@@ -81,7 +82,7 @@ SCHEDULER:
 # EVALUATION CONFIG (Validation during training - fast)
 # -------------------------------------------------------------------------
 EVAL:
-  MODEL_PATH    : 'output/UAVScenes_MulVMamba/best.pth'
+  MODEL_PATH    : 'mulvmamba_checkpoints/best.pth'
   IMAGE_SIZE    : [768, 768]
   BATCH_SIZE    : 1
   MODE          : 'whole'         # Fast validation (resize to 768x768)
@@ -94,7 +95,7 @@ EVAL:
 # TEST CONFIG (Final evaluation - accurate)
 # -------------------------------------------------------------------------
 TEST:
-  MODEL_PATH    : 'output/UAVScenes_MulVMamba/best.pth'
+  MODEL_PATH    : 'mulvmamba_checkpoints/best.pth'
   FILE          : '~/uavscenes007/uavscenes-cmnext/UAVScenesData/UAVScenesData'
   IMAGE_SIZE    : [768, 768]
   OVERLAY       : false

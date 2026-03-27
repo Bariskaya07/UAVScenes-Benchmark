@@ -160,7 +160,7 @@ add_path(osp.join(C.root_dir))
 C.log_dir = osp.join(C.root_dir, 'log_final', 'log_uavscenes', 'log_' + C.dataset_name + '_' + C.backbone)
 C.tb_dir = osp.join(C.log_dir, "tb")
 C.log_dir_link = C.log_dir
-C.checkpoint_dir = osp.join(C.log_dir, "checkpoint")
+C.checkpoint_dir = osp.join(C.root_dir, "sigma_checkpoints")
 
 exp_time = time.strftime('%Y_%m_%d_%H_%M_%S', time.localtime())
 C.log_file = C.log_dir + '/log_' + exp_time + '.log'

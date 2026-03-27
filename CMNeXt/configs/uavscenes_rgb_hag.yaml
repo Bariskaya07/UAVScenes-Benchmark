@@ -12,7 +12,7 @@
 # DEVICE & OUTPUT
 # -------------------------------------------------------------------------
 DEVICE: cuda
-SAVE_DIR: 'output/UAVScenes_CMNeXt_B2'
+SAVE_DIR: 'cmnext_checkpoints'
 SEED: 42                     # Reproducibility
 
 # -------------------------------------------------------------------------
