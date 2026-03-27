@@ -16,6 +16,15 @@ class EncoderDecoder(nn.Module):
         self.channels = [64, 128, 320, 512]
         self.norm_layer = norm_layer
         self.use_activation_checkpoint = bool(getattr(cfg, 'activation_checkpoint', False))
+        self.backbone_activation_checkpoint = bool(
+            getattr(cfg, 'backbone_activation_checkpoint', self.use_activation_checkpoint)
+        )
+        self.fusion_activation_checkpoint = bool(
+            getattr(cfg, 'fusion_activation_checkpoint', self.use_activation_checkpoint)
+        )
+        self.decoder_activation_checkpoint = bool(
+            getattr(cfg, 'decoder_activation_checkpoint', self.use_activation_checkpoint)
+        )
         # import backbone and decoder
         if cfg.backbone == 'swin_s':
             logger.info('Using backbone: Swin-Transformer-small')
@@ -56,17 +65,26 @@ class EncoderDecoder(nn.Module):
             logger.info('Using backbone: V-MAMBA')
             self.channels = [96, 192, 384, 768]
             from .encoders.dual_vmamba import vssm_tiny as backbone
-            self.backbone = backbone(use_checkpoint=self.use_activation_checkpoint)
+            self.backbone = backbone(
+                use_checkpoint=self.backbone_activation_checkpoint,
+                fusion_use_checkpoint=self.fusion_activation_checkpoint,
+            )
         elif cfg.backbone == 'sigma_small':
             logger.info('Using backbone: V-MAMBA')
             self.channels = [96, 192, 384, 768]
             from .encoders.dual_vmamba import vssm_small as backbone
-            self.backbone = backbone(use_checkpoint=self.use_activation_checkpoint)
+            self.backbone = backbone(
+                use_checkpoint=self.backbone_activation_checkpoint,
+                fusion_use_checkpoint=self.fusion_activation_checkpoint,
+            )
         elif cfg.backbone == 'sigma_base':
             logger.info('Using backbone: V-MAMBA')
             self.channels = [128, 256, 512, 1024]
             from .encoders.dual_vmamba import vssm_base as backbone
-            self.backbone = backbone(use_checkpoint=self.use_activation_checkpoint)
+            self.backbone = backbone(
+                use_checkpoint=self.backbone_activation_checkpoint,
+                fusion_use_checkpoint=self.fusion_activation_checkpoint,
+            )
         else:
             logger.info('Using backbone: Segformer-B2')
             from .encoders.dual_segformer import mit_b2 as backbone
@@ -107,7 +125,7 @@ class EncoderDecoder(nn.Module):
                 num_classes=cfg.num_classes,
                 embed_dim=self.channels[0],
                 deep_supervision=self.deep_supervision,
-                use_checkpoint=self.use_activation_checkpoint,
+                use_checkpoint=self.decoder_activation_checkpoint,
             )
 
         else:
