@@ -175,6 +175,7 @@ with Engine(custom_parser=parser) as engine:
         schedule_power,
         schedule_warmup_ratio,
     )
+    logger.info("Activation checkpointing: %s", bool(getattr(config, 'activation_checkpoint', False)))
     lr_policy = WarmUpPolyLR(
         start_lr=base_lr,
         lr_power=schedule_power,
