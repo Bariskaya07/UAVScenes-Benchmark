@@ -15,7 +15,6 @@ class EncoderDecoder(nn.Module):
         super(EncoderDecoder, self).__init__()
         self.channels = [64, 128, 320, 512]
         self.norm_layer = norm_layer
-        self.use_activation_checkpoint = bool(getattr(cfg, 'activation_checkpoint', False))
         # import backbone and decoder
         if cfg.backbone == 'swin_s':
             logger.info('Using backbone: Swin-Transformer-small')
@@ -56,17 +55,17 @@ class EncoderDecoder(nn.Module):
             logger.info('Using backbone: V-MAMBA')
             self.channels = [96, 192, 384, 768]
             from .encoders.dual_vmamba import vssm_tiny as backbone
-            self.backbone = backbone(use_checkpoint=self.use_activation_checkpoint)
+            self.backbone = backbone()
         elif cfg.backbone == 'sigma_small':
             logger.info('Using backbone: V-MAMBA')
             self.channels = [96, 192, 384, 768]
             from .encoders.dual_vmamba import vssm_small as backbone
-            self.backbone = backbone(use_checkpoint=self.use_activation_checkpoint)
+            self.backbone = backbone()
         elif cfg.backbone == 'sigma_base':
             logger.info('Using backbone: V-MAMBA')
             self.channels = [128, 256, 512, 1024]
             from .encoders.dual_vmamba import vssm_base as backbone
-            self.backbone = backbone(use_checkpoint=self.use_activation_checkpoint)
+            self.backbone = backbone()
         else:
             logger.info('Using backbone: Segformer-B2')
             from .encoders.dual_segformer import mit_b2 as backbone
@@ -101,14 +100,7 @@ class EncoderDecoder(nn.Module):
             logger.info('Using Mamba Decoder')
             from .decoders.MambaDecoder import MambaDecoder
             self.deep_supervision = False
-            self.decode_head = MambaDecoder(
-                img_size=[cfg.image_height, cfg.image_width],
-                in_channels=self.channels,
-                num_classes=cfg.num_classes,
-                embed_dim=self.channels[0],
-                deep_supervision=self.deep_supervision,
-                use_checkpoint=self.use_activation_checkpoint,
-            )
+            self.decode_head = MambaDecoder(img_size=[cfg.image_height, cfg.image_width], in_channels=self.channels, num_classes=cfg.num_classes, embed_dim=self.channels[0], deep_supervision=self.deep_supervision)
 
         else:
             logger.info('No decoder(FCN-32s)')
