@@ -1717,7 +1717,7 @@ class VSSBlock(nn.Module):
 
     def forward(self, input: torch.Tensor):
         if self.use_checkpoint:
-            return checkpoint.checkpoint(self._forward, input, use_reentrant=False)
+            return checkpoint.checkpoint(self._forward, input)
         else:
             return self._forward(input)
 
@@ -1806,7 +1806,7 @@ class CVSSDecoderBlock(nn.Module):
 
     def forward(self, input: torch.Tensor):
         if self.use_checkpoint:
-            return checkpoint.checkpoint(self._forward, input, use_reentrant=False)
+            return checkpoint.checkpoint(self._forward, input)
         else:
             return self._forward(input)
 
@@ -1865,7 +1865,7 @@ class CrossMambaFusionBlock(nn.Module):
         B C H W, B C H W -> B C H W
         '''
         if self.use_checkpoint:
-            return checkpoint.checkpoint(self._forward, x_rgb, x_e, use_reentrant=False)
+            return checkpoint.checkpoint(self._forward, x_rgb, x_e)
         else:
             return self._forward(x_rgb, x_e)
 
@@ -1923,7 +1923,7 @@ class ConcatMambaFusionBlock(nn.Module):
         B C H W, B C H W -> B C H W
         '''
         if self.use_checkpoint:
-            return checkpoint.checkpoint(self._forward, x_rgb, x_e, use_reentrant=False)
+            return checkpoint.checkpoint(self._forward, x_rgb, x_e)
         else:
             return self._forward(x_rgb, x_e)
 
@@ -2210,5 +2210,6 @@ class Backbone_VSSM(VSSM):
             return x
         
         return outs
+
 
 

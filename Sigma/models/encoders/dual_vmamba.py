@@ -37,7 +37,6 @@ class RGBXTransformer(nn.Module):
         super().__init__()
         
         self.ape = ape
-        self.use_checkpoint = bool(kwargs.get("use_checkpoint", False))
 
         self.vssm = Backbone_VSSM(
             pretrained=pretrained,
@@ -48,7 +47,6 @@ class RGBXTransformer(nn.Module):
             mlp_ratio=mlp_ratio,
             downsample_version=downsample_version,
             drop_path_rate=drop_path_rate,
-            use_checkpoint=self.use_checkpoint,
         )
         
         self.cross_mamba = nn.ModuleList(
@@ -56,7 +54,6 @@ class RGBXTransformer(nn.Module):
                 hidden_dim=dims * (2 ** i),
                 mlp_ratio=0.0,
                 d_state=4,
-                use_checkpoint=self.use_checkpoint,
             ) for i in range(4)
         )
         self.channel_attn_mamba = nn.ModuleList(
@@ -64,7 +61,6 @@ class RGBXTransformer(nn.Module):
                 hidden_dim=dims * (2 ** i),
                 mlp_ratio=0.0,
                 d_state=4,
-                use_checkpoint=self.use_checkpoint,
             ) for i in range(4)
         )
         
@@ -129,7 +125,6 @@ class vssm_tiny(RGBXTransformer):
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.2,
-            **kwargs,
         )
 
 class vssm_small(RGBXTransformer):
@@ -141,7 +136,6 @@ class vssm_small(RGBXTransformer):
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.3,
-            **kwargs,
         )
 
 class vssm_base(RGBXTransformer):
@@ -153,5 +147,4 @@ class vssm_base(RGBXTransformer):
             mlp_ratio=0.0,
             downsample_version='v1',
             drop_path_rate=0.6, # VMamba-B with droppath 0.5 + no ema. VMamba-B* represents for VMamba-B with droppath 0.6 + ema
-            **kwargs,
         )
