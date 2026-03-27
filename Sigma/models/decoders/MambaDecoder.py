@@ -140,7 +140,7 @@ class Mamba_up(nn.Module):
     def forward(self, x):
         for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=False)
             else:
                 x = blk(x)
         if self.upsample is not None:
