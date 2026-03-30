@@ -218,17 +218,19 @@ def main(cfg, gpu, save_dir):
             writer.add_scalar('train/loss', train_loss, epoch)
         torch.cuda.empty_cache()
 
+        if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
+            epoch_ckpt = save_dir / epoch_checkpoint_name('mulvmamba', epoch + 1)
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': model.module.state_dict() if train_cfg['DDP'] else model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': train_loss,
+                'scheduler_state_dict': scheduler.state_dict(),
+                'best_miou': best_mIoU,
+            }, epoch_ckpt)
+
         if ((epoch+1) % train_cfg['EVAL_INTERVAL'] == 0 and (epoch+1) >= train_cfg['EVAL_START']) or (epoch+1) == epochs:
             if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
-                epoch_ckpt = save_dir / epoch_checkpoint_name('mulvmamba', epoch + 1)
-                torch.save({
-                    'epoch': epoch + 1,
-                    'model_state_dict': model.module.state_dict() if train_cfg['DDP'] else model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'loss': train_loss,
-                    'scheduler_state_dict': scheduler.state_dict(),
-                    'best_miou': best_mIoU,
-                }, epoch_ckpt)
                 # Get eval mode from config (default: whole for fast validation)
                 eval_mode = eval_cfg.get('MODE', 'whole')
                 sliding = (eval_mode == 'slide')

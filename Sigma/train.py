@@ -386,14 +386,11 @@ with Engine(custom_parser=parser) as engine:
                 os.remove(last_ckpt)
             engine.save_checkpoint(last_ckpt)
 
-        # Save named checkpoint for evaluation/best-model tracking (every checkpoint_step epochs)
-        if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
-            if engine.distributed and (engine.local_rank == 0):
-                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
-                materialize_epoch_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'), 'sigma', epoch)
-            elif not engine.distributed:
-                engine.save_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'))
-                materialize_epoch_checkpoint(osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth'), 'sigma', epoch)
+        # Save a named checkpoint every epoch so spot interruptions lose at most one epoch.
+        if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
+            epoch_ckpt_path = osp.join(config.checkpoint_dir, f'epoch-{epoch}.pth')
+            engine.save_checkpoint(epoch_ckpt_path)
+            materialize_epoch_checkpoint(epoch_ckpt_path, 'sigma', epoch)
 
         # devices_val = [engine.local_rank] if engine.distributed else [0]
         torch.cuda.empty_cache()

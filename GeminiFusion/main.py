@@ -1379,23 +1379,25 @@ def main():
             grad_clip=args.grad_clip,
         )
 
-        if (epoch_current + 1) % args.val_every == 0:
-            next_epoch = epoch_current + 1
-            if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
-                state_to_save = _segmenter_state_dict_for_save(segmenter, args)
-            else:
-                state_to_save = _segmenter_state_dict_for_save(segmenter, args)
-            epoch_ckpt_payload = {
-                "segmenter": state_to_save,
-                "epoch_start": next_epoch,
-                "best_val": saver.best_val,
-            }
-            epoch_ckpt_path = os.path.join(
-                ckpt_dir,
-                epoch_checkpoint_name("geminifusion", next_epoch, ".pth.tar"),
-            )
-            if _is_main_process():
-                torch.save(epoch_ckpt_payload, epoch_ckpt_path)
+        next_epoch = epoch_current + 1
+        if args.fsdp and dist.is_initialized() and dist.get_world_size() > 1:
+            state_to_save = _segmenter_state_dict_for_save(segmenter, args)
+        else:
+            state_to_save = _segmenter_state_dict_for_save(segmenter, args)
+        epoch_ckpt_payload = {
+            "segmenter": state_to_save,
+            "epoch_start": next_epoch,
+            "best_val": saver.best_val,
+        }
+        epoch_ckpt_path = os.path.join(
+            ckpt_dir,
+            epoch_checkpoint_name("geminifusion", next_epoch, ".pth.tar"),
+        )
+        if _is_main_process():
+            torch.save(epoch_ckpt_payload, epoch_ckpt_path)
+            torch.save(epoch_ckpt_payload, os.path.join(ckpt_dir, "checkpoint.pth.tar"))
+
+        if next_epoch % args.val_every == 0:
             miou = validate(
                 segmenter,
                 args.input,
@@ -1413,9 +1415,8 @@ def main():
                     epoch_ckpt_payload["best_val"] = miou
                     torch.save(epoch_ckpt_payload, os.path.join(ckpt_dir, "model-best.pth.tar"))
                     promote_best_checkpoint(epoch_ckpt_path, "geminifusion", next_epoch)
-                else:
-                    epoch_ckpt_payload["best_val"] = saver.best_val
-                    torch.save(epoch_ckpt_payload, os.path.join(ckpt_dir, "checkpoint.pth.tar"))
+                epoch_ckpt_payload["best_val"] = saver.best_val
+                torch.save(epoch_ckpt_payload, os.path.join(ckpt_dir, "checkpoint.pth.tar"))
 
     print_log(
         f"Training finished, time spent {(time.time() - start) / 60.0:.3f}min\n"

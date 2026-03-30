@@ -912,25 +912,26 @@ def main():
 
         logger.info(f"Epoch {epoch + 1} train loss: {train_loss:.4f}")
 
+        epoch_ckpt_path = os.path.join(
+            cfg.logging.checkpoint_dir,
+            f'checkpoint_epoch_{epoch + 1}.pth'
+        )
+        if is_main:
+            save_checkpoint(
+                {
+                    'epoch': epoch + 1,
+                    'model': raw_model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'best_miou': best_miou,
+                },
+                filename=epoch_ckpt_path
+            )
+            materialize_epoch_checkpoint(epoch_ckpt_path, 'hrfuser', epoch + 1)
+
         val_this_epoch = (epoch + 1) % cfg.training.val_every == 0 or epoch == cfg.training.epochs - 1
 
         # Validate
         if val_this_epoch:
-            epoch_ckpt_path = os.path.join(
-                cfg.logging.checkpoint_dir,
-                f'checkpoint_epoch_{epoch + 1}.pth'
-            )
-            if is_main:
-                save_checkpoint(
-                    {
-                        'epoch': epoch + 1,
-                        'model': raw_model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'best_miou': best_miou,
-                    },
-                    filename=epoch_ckpt_path
-                )
-                materialize_epoch_checkpoint(epoch_ckpt_path, 'hrfuser', epoch + 1)
             if is_main:
                 metrics = validate(raw_model, val_loader, cfg, device, logger)
                 current_miou = metrics['miou']
@@ -953,21 +954,6 @@ def main():
 
             if distributed:
                 dist.barrier()
-
-        # Regular checkpoint save
-        elif (epoch + 1) % cfg.training.save_every == 0 and not val_this_epoch:
-            if is_main:
-                save_checkpoint(
-                    {
-                        'epoch': epoch + 1,
-                        'model': raw_model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'best_miou': best_miou,
-                    },
-                    filename=os.path.join(cfg.logging.checkpoint_dir,
-                                          f'checkpoint_epoch_{epoch + 1}.pth')
-                )
-
     total_time = (time.time() - training_start) / 60.0
     logger.info(f"\nTraining completed in {total_time:.1f} minutes!")
     if is_main:

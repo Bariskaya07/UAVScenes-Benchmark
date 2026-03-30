@@ -65,7 +65,7 @@ training:
 
   # Validation frequency
   val_every: 5  # Validate every N epochs
-  save_every: 10  # Save checkpoint every N epochs
+  save_every: 1  # Save checkpoint every epoch (spot-safe)
 
   # Random seed
   seed: 42

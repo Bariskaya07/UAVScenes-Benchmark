@@ -423,15 +423,19 @@ with Engine(custom_parser=parser) as engine:
                     epoch_mem['peak_reserved'],
                 )
 
+        if is_main:
+            engine.save_and_link_checkpoint(
+                config.checkpoint_dir,
+                config.log_dir,
+                config.log_dir_link,
+            )
+            epoch_ckpt = osp.join(
+                config.checkpoint_dir, epoch_checkpoint_name('cmx', epoch)
+            )
+
         # Validation + best checkpoint using fast whole-image validation on val set
         if (epoch >= config.checkpoint_start_epoch) and (epoch % config.checkpoint_step == 0) or (epoch == config.nepochs):
             if is_main:
-                engine.save_and_link_checkpoint(config.checkpoint_dir,
-                                                config.log_dir,
-                                                config.log_dir_link)
-                epoch_ckpt = osp.join(
-                    config.checkpoint_dir, epoch_checkpoint_name('cmx', epoch)
-                )
 
                 # Use the network without DDP wrapper for evaluation
                 eval_model = model.module if engine.distributed else model

@@ -560,24 +560,25 @@ def main():
             epoch + 1, device, scaler, logger
         )
 
+        epoch_ckpt_path = os.path.join(
+            cfg.logging.checkpoint_dir,
+            f'checkpoint_epoch_{epoch + 1}.pth'
+        )
+        save_checkpoint(
+            {
+                'epoch': epoch + 1,
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'best_miou': best_miou
+            },
+            filename=epoch_ckpt_path
+        )
+        materialize_epoch_checkpoint(epoch_ckpt_path, 'tokenfusion', epoch + 1)
+
         val_this_epoch = (epoch + 1) % cfg.training.val_every == 0 or epoch == cfg.training.epochs - 1
 
         # Validate (use whole mode for fast validation during training)
         if val_this_epoch:
-            epoch_ckpt_path = os.path.join(
-                cfg.logging.checkpoint_dir,
-                f'checkpoint_epoch_{epoch + 1}.pth'
-            )
-            save_checkpoint(
-                {
-                    'epoch': epoch + 1,
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'best_miou': best_miou
-                },
-                filename=epoch_ckpt_path
-            )
-            materialize_epoch_checkpoint(epoch_ckpt_path, 'tokenfusion', epoch + 1)
             eval_mode = getattr(cfg.evaluation, 'val_mode', 'whole')
             metrics = validate(model, val_loader, cfg, device, logger, eval_mode=eval_mode)
             current_miou = metrics['miou']
@@ -594,19 +595,6 @@ def main():
                 checkpoint['metrics'] = metrics
                 torch.save(checkpoint, os.path.join(cfg.logging.checkpoint_dir, 'best.pth'))
                 promote_best_checkpoint(epoch_ckpt_path, 'tokenfusion', epoch + 1)
-
-        # Regular checkpoint save
-        if (epoch + 1) % cfg.training.save_every == 0 and not val_this_epoch:
-            save_checkpoint(
-                {
-                    'epoch': epoch + 1,
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'best_miou': best_miou
-                },
-                filename=os.path.join(cfg.logging.checkpoint_dir, f'checkpoint_epoch_{epoch + 1}.pth')
-            )
-
     logger.info(f"\nTraining completed!")
     maybe_sync_checkpoint_dir(cfg.logging.checkpoint_dir, logger.info)
     logger.info(f"Best mIoU: {best_miou * 100:.2f}%")

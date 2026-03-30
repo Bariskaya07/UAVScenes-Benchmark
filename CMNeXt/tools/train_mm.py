@@ -681,11 +681,12 @@ def main():
         print(f"Train Loss: {train_loss:.4f}")
         writer.add_scalar('Epoch/Train_Loss', train_loss, epoch)
 
+        epoch_ckpt_path = save_epoch_checkpoint(
+            model, optimizer, scheduler, epoch, cfg, best_miou
+        )
+
         # Evaluate on VALIDATION set (not test set!)
         if (epoch + 1) >= eval_start and ((epoch + 1 - eval_start) % eval_interval == 0):
-            epoch_ckpt_path = save_epoch_checkpoint(
-                model, optimizer, scheduler, epoch, cfg, best_miou
-            )
             print("\nEvaluating on validation set...")
             results, metrics = evaluate(model, val_loader, device, cfg,
                                         num_classes=cfg['MODEL']['NUM_CLASSES'])
