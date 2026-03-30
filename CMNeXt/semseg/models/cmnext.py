@@ -33,7 +33,7 @@ class ConvModule(nn.Module):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias)
         self.bn = nn.BatchNorm2d(out_channels)
-        self.act = nn.ReLU(inplace=True)
+        self.act = nn.ReLU(inplace=False)
 
     def forward(self, x):
         return self.act(self.bn(self.conv(x)))
@@ -220,7 +220,7 @@ class SegFormerHead(nn.Module):
         self.linear_fuse = nn.Sequential(
             nn.Conv2d(embed_dim * 4, embed_dim, 1, bias=False),
             nn.BatchNorm2d(embed_dim),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=False)
         )
 
         # Final classifier
@@ -355,6 +355,15 @@ class CMNeXt(nn.Module):
 
         return checkpoint(custom_forward, *inputs, use_reentrant=False)
 
+    def _run_decode_head(self, features):
+        if not self._should_checkpoint_module(self.decode_head, *features):
+            return self.decode_head(features)
+
+        def custom_forward(*tensor_inputs):
+            return self.decode_head(list(tensor_inputs))
+
+        return checkpoint(custom_forward, *features, use_reentrant=False)
+
     def load_pretrained(self, pretrained_path):
         """Load pretrained backbone weights (only for RGB hub backbone).
 
@@ -408,7 +417,7 @@ class CMNeXt(nn.Module):
             fused_features = hub_features
 
         # Decode
-        logits = self.decode_head(fused_features)
+        logits = self._run_decode_head(fused_features)
 
         # Upsample to original size
         logits = F.interpolate(logits, size=input_size, mode='bilinear', align_corners=False)
