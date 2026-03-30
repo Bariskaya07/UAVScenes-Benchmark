@@ -13,6 +13,7 @@ import os
 import argparse
 import yaml
 import time
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
@@ -45,7 +46,7 @@ def parse_args():
                         help='Path to model checkpoint')
     parser.add_argument('--config', type=str, default='configs/uavscenes_rgb_hag.yaml',
                         help='Path to config file')
-    parser.add_argument('--output', type=str, default=None,
+    parser.add_argument('--output', type=str, default=str(Path(__file__).resolve().parent / 'results2'),
                         help='Output directory for predictions')
     parser.add_argument('--save-pred', action='store_true',
                         help='Save prediction images')

@@ -322,7 +322,7 @@ def get_arguments():
         "--output-dir",
         type=str,
         default="",
-        help="Directory for saving final evaluation outputs (defaults to ckpt/<ckpt>/results)",
+        help="Directory for saving final evaluation outputs (defaults to results2)",
     )
     parser.add_argument(
         "--grad-clip",
@@ -1508,8 +1508,7 @@ def main():
 
     # Save results to file
     if _is_main_process():
-        output_root = args.output_dir if args.output_dir else ckpt_dir
-        results_dir = os.path.join(output_root, 'results')
+        results_dir = args.output_dir if args.output_dir else os.path.join(REPO_ROOT, 'results2')
         test_metrics.save_results(results_dir, 'GeminiFusion', avg_time_ms, fps, num_images)
         maybe_sync_checkpoint_dir(ckpt_dir, print_log)
 

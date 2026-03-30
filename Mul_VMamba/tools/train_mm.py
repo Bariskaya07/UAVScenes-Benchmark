@@ -329,7 +329,7 @@ def main(cfg, gpu, save_dir):
         logger.info(f"  FPS: {fps:.2f}")
 
         # Save results to file
-        results_dir = os.path.join(save_dir, 'results')
+        results_dir = str(resolve_repo_path('results2'))
         test_metrics.save_results(results_dir, 'Mul_VMamba', avg_time_ms, fps, num_images, logger)
         maybe_sync_checkpoint_dir(save_dir, logger.info)
 

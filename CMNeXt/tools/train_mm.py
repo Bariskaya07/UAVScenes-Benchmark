@@ -16,6 +16,7 @@ Features:
 import os
 import sys
 import argparse
+import json
 import yaml
 import random
 import time
@@ -85,6 +86,40 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def _to_serializable(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {k: _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_serializable(v) for v in value]
+    return value
+
+
+def save_test_results(results_dir: Path, model_name: str, results: dict):
+    results_dir.mkdir(parents=True, exist_ok=True)
+    payload = _to_serializable(results)
+    json_path = results_dir / f'{model_name}_results.json'
+    txt_path = results_dir / f'{model_name}_results.txt'
+
+    with open(json_path, 'w') as f:
+        json.dump(payload, f, indent=2)
+
+    with open(txt_path, 'w') as f:
+        f.write(f"{model_name} UAVScenes Test Results\n")
+        f.write("=" * 80 + "\n")
+        f.write(f"mIoU: {results['mIoU'] * 100:.2f}%\n")
+        f.write(f"Static mIoU: {results['static_mIoU'] * 100:.2f}%\n")
+        f.write(f"Dynamic mIoU: {results['dynamic_mIoU'] * 100:.2f}%\n")
+        f.write(f"Pixel Accuracy: {results['pixel_accuracy'] * 100:.2f}%\n")
+        f.write("\nPer-class IoU\n")
+        f.write("-" * 80 + "\n")
+        for idx, class_name in enumerate(UAVScenesMetrics.CLASS_NAMES):
+            f.write(f"{idx:2d}. {class_name:<20} {results['per_class_iou'][idx] * 100:7.2f}%\n")
 
 
 def resolve_amp_dtype(dtype_name):
@@ -701,6 +736,9 @@ def main():
                                 num_classes=cfg['MODEL']['NUM_CLASSES'],
                                 eval_mode=test_mode, config_key='TEST')
     metrics.print_results()
+    results_dir = Path(__file__).resolve().parents[1] / 'results2'
+    save_test_results(results_dir, 'CMNeXt', results)
+    print(f"Results saved to: {results_dir}")
 
     writer.close()
     print(f"\nLogs saved to: {log_dir}")

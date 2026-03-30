@@ -673,7 +673,7 @@ def main():
     logger.info(f"  FPS: {fps:.2f}")
 
     # Save results to file
-    results_dir = os.path.join(cfg.logging.checkpoint_dir, 'results')
+    results_dir = str(Path(__file__).resolve().parent / 'results2')
     test_metrics_obj.save_results(results_dir, 'TokenFusion', avg_time_ms, fps, num_images, logger)
 
 

@@ -539,5 +539,5 @@ with Engine(custom_parser=parser) as engine:
     logger.info(f"  FPS: {fps:.2f}")
 
     # Save results to file
-    results_dir = os.path.join(config.log_dir, 'results')
+    results_dir = os.path.join(config.root_dir, 'results2')
     test_metrics.save_results(results_dir, 'Sigma', avg_time_ms, fps, num_images, logger)

@@ -138,10 +138,18 @@ if __name__ == "__main__":
     # For UAVScenes, default to slide mode on test for fair benchmarking.
     if dataset_name == 'uavscenes' and args.split == 'test':
         config.eval_mode = getattr(config, 'test_mode', 'slide')
+        if args.save_path is None:
+            args.save_path = os.path.join(config.root_dir, 'results2')
 
     # Val: resize for fast evaluation; Test: keep full resolution for sliding-window.
     val_pre = ValPre(config, resize=(args.split == 'val'))
     dataset = DatasetClass(data_setting, args.split, val_pre)
+    results_log_file = config.val_log_file
+    results_log_link = config.link_val_log_file
+    if args.save_path is not None:
+        ensure_dir(args.save_path)
+        results_log_file = os.path.join(args.save_path, 'sigma_results.txt')
+        results_log_link = os.path.join(args.save_path, 'sigma_results_last.txt')
  
     with torch.no_grad():
         segmentor = SegEvaluator(dataset, config.num_classes, config.norm_mean,
@@ -149,5 +157,5 @@ if __name__ == "__main__":
                                  config.eval_scale_array, config.eval_flip,
                                  all_dev, args.verbose, args.save_path,
                                  args.show_image, config)
-        _, mean_IoU = segmentor.run_eval(config.checkpoint_dir, args.epochs, config.val_log_file,
-                      config.link_val_log_file)
+        _, mean_IoU = segmentor.run_eval(config.checkpoint_dir, args.epochs, results_log_file,
+                      results_log_link)

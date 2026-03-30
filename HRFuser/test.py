@@ -53,7 +53,7 @@ def get_arguments():
                         choices=["test", "val"])
     parser.add_argument("--save-image", type=int, default=0,
                         help="Number of images to save (-1 for all)")
-    parser.add_argument("--save-dir", type=str, default="test_results")
+    parser.add_argument("--save-dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "results2"))
     parser.add_argument("--flip-test", action="store_true", default=False,
                         help="Enable horizontal flip test-time augmentation")
     return parser.parse_args()

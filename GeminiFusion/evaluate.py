@@ -221,8 +221,7 @@ def evaluate(args):
     if args.output_dir:
         results_dir = args.output_dir
     else:
-        # Default: same directory as checkpoint
-        results_dir = os.path.join(os.path.dirname(args.resume), "results")
+        results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results2")
     os.makedirs(results_dir, exist_ok=True)
 
     # Create model

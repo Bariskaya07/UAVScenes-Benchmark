@@ -125,7 +125,7 @@ if __name__ == "__main__":
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     parser.add_argument('--show_image', '-s', default=False,
                         action='store_true')
-    parser.add_argument('--save_path', '-p', default=None)
+    parser.add_argument('--save_path', '-p', default=os.path.join(config.root_dir, 'results2'))
 
     args = parser.parse_args()
     all_dev = parse_devices(args.devices)
@@ -136,6 +136,9 @@ if __name__ == "__main__":
     }
     val_pre = ValPre(resize_to=None)  # No resize, no normalize — handled by SegEvaluator
     dataset = UAVScenesDataset(data_setting, 'test', val_pre)
+    ensure_dir(args.save_path)
+    results_log_file = os.path.join(args.save_path, 'cmx_results.txt')
+    results_log_link = os.path.join(args.save_path, 'cmx_results_last.txt')
 
     with torch.no_grad():
         segmentor = SegEvaluator(dataset, config.num_classes, config.norm_mean,
@@ -143,5 +146,5 @@ if __name__ == "__main__":
                                  config.eval_scale_array, config.eval_flip,
                                  all_dev, args.verbose, args.save_path,
                                  args.show_image)
-        segmentor.run(config.checkpoint_dir, args.epochs, config.val_log_file,
-                      config.link_val_log_file)
+        segmentor.run(config.checkpoint_dir, args.epochs, results_log_file,
+                      results_log_link)
