@@ -231,6 +231,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
 
     if device.type == 'cuda' and torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats(device)
+    last_print_len = 0
 
     print(
         f"[Train] Epoch {epoch}: {num_batches} batches | "
@@ -319,29 +320,38 @@ def train_one_epoch(model, dataloader, criterion, optimizer, scheduler, scaler, 
 
         total_loss += loss.item() * accum_steps  # Unscale for logging
 
-        # Logging
-        if batch_idx == 0 or (batch_idx + 1) % log_interval == 0 or batch_idx == num_batches - 1:
-            current_lr = optimizer.param_groups[0]['lr']
-            elapsed = time.time() - start_time
-            eta = elapsed / (batch_idx + 1) * (num_batches - batch_idx - 1)
-            mem = memory_stats_mb()
+        current_lr = optimizer.param_groups[0]['lr']
+        elapsed = time.time() - start_time
+        eta = elapsed / (batch_idx + 1) * (num_batches - batch_idx - 1)
+        mem = memory_stats_mb()
+        avg_loss = total_loss / (batch_idx + 1)
 
-            print_str = (
-                f"Epoch [{epoch}] [{batch_idx+1}/{num_batches}] "
-                f"Loss: {loss.item():.4f} "
-                f"LR: {current_lr:.2e} "
-                f"ETA: {eta/60:.1f}min"
+        print_str = (
+            f"Epoch {epoch+1}/{cfg['TRAIN']['EPOCHS']} "
+            f"Iter {batch_idx+1}/{num_batches}: "
+            f"lr={current_lr:.4e} "
+            f"loss={loss.item():.4f} "
+            f"total_loss={avg_loss:.4f}"
+        )
+        if mem is not None:
+            print_str += (
+                f" alloc={mem['alloc']:.0f}MiB"
+                f" reserved={mem['reserved']:.0f}MiB"
+                f" peak_alloc={mem['peak_alloc']:.0f}MiB"
+                f" peak_reserved={mem['peak_reserved']:.0f}MiB"
             )
-            if mem is not None:
-                print_str += (
-                    f" | alloc={mem['alloc']:.0f}MiB"
-                    f" reserved={mem['reserved']:.0f}MiB"
-                    f" peak_alloc={mem['peak_alloc']:.0f}MiB"
-                    f" peak_reserved={mem['peak_reserved']:.0f}MiB"
-                )
-            print(print_str, flush=True)
+        print_str += f": [{elapsed/60:05.2f}<{eta/60:05.2f}, {elapsed/(batch_idx+1):.2f}s/it]"
 
-            # TensorBoard
+        padding = ' ' * max(0, last_print_len - len(print_str))
+        sys.stdout.write('\r' + print_str + padding)
+        sys.stdout.flush()
+        last_print_len = len(print_str)
+
+        if batch_idx == num_batches - 1:
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+
+        if batch_idx == 0 or (batch_idx + 1) % log_interval == 0 or batch_idx == num_batches - 1:
             global_step = epoch * num_batches + batch_idx
             writer.add_scalar('Train/Loss', loss.item(), global_step)
             writer.add_scalar('Train/LR', current_lr, global_step)
