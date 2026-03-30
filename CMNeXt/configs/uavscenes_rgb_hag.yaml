@@ -107,7 +107,7 @@ EVAL:
   IMAGE_SIZE:
     - 768
     - 768                    # Sliding window size
-  BATCH_SIZE: 1              # Safe for sliding window
+  BATCH_SIZE: 8              # Fast whole-image validation during training
 
   # STRATEGY: WHOLE IMAGE (Fast validation during training)
   # Validation uses 'whole' mode for speed, final test uses 'slide' for accuracy
@@ -118,6 +118,7 @@ EVAL:
 
 TEST:
   # STRATEGY: SLIDING WINDOW (Accurate final evaluation)
+  BATCH_SIZE: 1              # Keep final test evaluation conservative
   # Why: UAVScenes 2448×2048 -> resize loses 79% pixels!
   MODE: 'slide'
   STRIDE:

@@ -284,7 +284,8 @@ def main(cfg, gpu, save_dir):
 
         # Create test dataloader
         testset = eval(dataset_cfg['NAME'])(dataset_root, 'test', valtransform, dataset_cfg['MODALS'], **dataset_extra_kwargs)
-        testloader = DataLoader(testset, batch_size=eval_cfg['BATCH_SIZE'], num_workers=num_workers, pin_memory=False)
+        test_batch_size = cfg.get('TEST', {}).get('BATCH_SIZE', 1)
+        testloader = DataLoader(testset, batch_size=test_batch_size, num_workers=num_workers, pin_memory=False)
         logger.info(f"Test set: {len(testset)} samples")
 
         # Evaluate with slide mode using UAVScenesMetrics for detailed output

@@ -208,7 +208,11 @@ def main(cfg):
         print(msg)
         model = model.to(device)
         sampler_val = None
-        dataloader = DataLoader(dataset, batch_size=eval_cfg['BATCH_SIZE'], num_workers=0, pin_memory=False, sampler=sampler_val)
+        if split == 'test':
+            batch_size = cfg.get('TEST', {}).get('BATCH_SIZE', 1)
+        else:
+            batch_size = eval_cfg['BATCH_SIZE']
+        dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=0, pin_memory=False, sampler=sampler_val)
         if True:
             if eval_cfg['MSF']['ENABLE']:
                 acc, macc, f1, mf1, ious, miou = evaluate_msf(model, dataloader, device, eval_cfg['MSF']['SCALES'], eval_cfg['MSF']['FLIP'])

@@ -159,7 +159,12 @@ def create_dataloader(cfg, split='train'):
     )
 
     # Create dataloader
-    batch_size = train_cfg['BATCH_SIZE'] if split == 'train' else cfg['EVAL']['BATCH_SIZE']
+    if split == 'train':
+        batch_size = train_cfg['BATCH_SIZE']
+    elif split == 'val':
+        batch_size = cfg['EVAL']['BATCH_SIZE']
+    else:
+        batch_size = cfg.get('TEST', {}).get('BATCH_SIZE', 1)
     shuffle = (split == 'train')
     num_workers = train_cfg.get('WORKERS', 8)
 

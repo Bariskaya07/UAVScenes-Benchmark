@@ -168,6 +168,7 @@ normalization:
 evaluation:
   # Validation during training (fast)
   val_mode: "whole"           # Fast validation (resize to 768x768)
+  val_batch_size: 8           # Batched whole-image validation during training
   # Final test (accurate)
   test_mode: "slide"          # Accurate final test
   slide_size: 768

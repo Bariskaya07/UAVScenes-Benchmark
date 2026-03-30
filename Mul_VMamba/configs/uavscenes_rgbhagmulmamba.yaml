@@ -84,7 +84,7 @@ SCHEDULER:
 EVAL:
   MODEL_PATH    : 'mulvmamba_checkpoints/best.pth'
   IMAGE_SIZE    : [768, 768]
-  BATCH_SIZE    : 1
+  BATCH_SIZE    : 8
   MODE          : 'whole'         # Fast validation (resize to 768x768)
   MSF:
     ENABLE      : false
@@ -98,6 +98,7 @@ TEST:
   MODEL_PATH    : 'mulvmamba_checkpoints/best.pth'
   FILE          : '~/uavscenes007/uavscenes-cmnext/UAVScenesData/UAVScenesData'
   IMAGE_SIZE    : [768, 768]
+  BATCH_SIZE    : 1
   OVERLAY       : false
   MODE          : 'slide'         # Accurate final test
   STRIDE        : [512, 512]      # ~33% overlap for accuracy

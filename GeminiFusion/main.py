@@ -151,8 +151,8 @@ def get_arguments():
     parser.add_argument(
         "--val-batch-size",
         type=int,
-        default=1,
-        help="Validation batch size (default: 1). Increase for faster eval if VRAM allows.",
+        default=8,
+        help="Validation batch size during training whole-image eval (default: 8).",
     )
     parser.add_argument(
         "--val-progress",
