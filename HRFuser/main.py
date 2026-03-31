@@ -123,6 +123,15 @@ def reset_cuda_peak_memory_stats():
         torch.cuda.reset_peak_memory_stats()
 
 
+def format_duration(seconds):
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f'{hours:02d}:{minutes:02d}:{secs:02d}'
+    return f'{minutes:02d}:{secs:02d}'
+
+
 def get_amp_dtype(cfg):
     """Return configured AMP autocast dtype."""
     return resolve_amp_dtype(getattr(cfg.training, 'amp_dtype', 'bf16'))
@@ -528,6 +537,7 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
     data_time = AverageMeter()
     amp_enabled = cfg.training.amp
     amp_dtype = get_amp_dtype(cfg)
+    epoch_start_time = time.time()
 
     end = time.time()
     num_iters = len(train_loader)
@@ -592,6 +602,9 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
         # Logging
         if is_main and (i + 1) % cfg.logging.print_freq == 0:
             current_lr = optimizer.param_groups[0]['lr']
+            elapsed = time.time() - epoch_start_time
+            avg_iter_time = elapsed / (i + 1)
+            eta = avg_iter_time * (num_iters - (i + 1))
             mem = get_cuda_memory_stats_mb()
             mem_str = ''
             if mem is not None:
@@ -607,6 +620,7 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
                 f'LR: {current_lr:.6f} '
                 f'Data: {data_time.avg:.3f}s '
                 f'Batch: {batch_time.avg:.3f}s'
+                f' [{format_duration(elapsed)}<{format_duration(eta)}, {avg_iter_time:.2f}s/it]'
                 f'{mem_str}'
             )
 

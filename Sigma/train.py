@@ -98,6 +98,15 @@ def reset_cuda_peak_memory_stats():
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
+
+def format_duration(seconds):
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f'{hours:02d}:{minutes:02d}:{secs:02d}'
+    return f'{minutes:02d}:{secs:02d}'
+
 with Engine(custom_parser=parser) as engine:
     args = parser.parse_args()
     print(args)
@@ -312,6 +321,7 @@ with Engine(custom_parser=parser) as engine:
         pbar = tqdm(range(niters_per_epoch), file=sys.stdout,
                     bar_format=bar_format)
         reset_cuda_peak_memory_stats()
+        epoch_start_time = time.time()
         dataloader = iter(train_loader)
 
         sum_loss = 0
@@ -392,6 +402,19 @@ with Engine(custom_parser=parser) as engine:
                             )
                         )
                     pbar.set_description(print_str, refresh=False)
+                    if (idx + 1) % 100 == 0:
+                        elapsed = time.time() - epoch_start_time
+                        avg_iter_time = elapsed / (idx + 1)
+                        eta = avg_iter_time * (niters_per_epoch - (idx + 1))
+                        logger.info(
+                            'Epoch %d Iter %d/%d [%s<%s, %.2fs/it]',
+                            epoch,
+                            idx + 1,
+                            niters_per_epoch,
+                            format_duration(elapsed),
+                            format_duration(eta),
+                            avg_iter_time,
+                        )
             else:
                 sum_loss += loss.item()
                 mem = get_cuda_memory_stats_mb()
@@ -408,8 +431,21 @@ with Engine(custom_parser=parser) as engine:
                             mem['peak_allocated'],
                             mem['peak_reserved'],
                         )
+                        )
+                    pbar.set_description(print_str, refresh=False)
+                if (idx + 1) % 100 == 0:
+                    elapsed = time.time() - epoch_start_time
+                    avg_iter_time = elapsed / (idx + 1)
+                    eta = avg_iter_time * (niters_per_epoch - (idx + 1))
+                    logger.info(
+                        'Epoch %d Iter %d/%d [%s<%s, %.2fs/it]',
+                        epoch,
+                        idx + 1,
+                        niters_per_epoch,
+                        format_duration(elapsed),
+                        format_duration(eta),
+                        avg_iter_time,
                     )
-                pbar.set_description(print_str, refresh=False)
             del loss
             
         

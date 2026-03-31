@@ -112,6 +112,15 @@ def reset_cuda_peak_memory_stats():
         torch.cuda.reset_peak_memory_stats()
 
 
+def format_duration(seconds):
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
 def resolve_amp_dtype(dtype_name: str):
     """Map AMP dtype flag to torch dtype."""
     dtype_name = str(dtype_name).lower()
@@ -644,6 +653,7 @@ def train(
 
     batch_time = AverageMeter()
     losses = AverageMeter()
+    epoch_start_time = time.time()
 
     did_log_once = getattr(train, "_did_log_once", False)
 
@@ -817,6 +827,28 @@ def train(
                 pbar.set_postfix(postfix)
             except Exception:
                 pass
+
+        if is_main and (((i + 1) % 50 == 0) or ((i + 1) == len(train_loader))):
+            elapsed = time.time() - epoch_start_time
+            avg_iter_time = elapsed / (i + 1)
+            eta = avg_iter_time * (len(train_loader) - (i + 1))
+            mem = get_cuda_memory_stats_mb()
+            mem_str = ""
+            if mem is not None:
+                mem_str = (
+                    f" alloc={mem['allocated']:.0f}MiB"
+                    f" reserved={mem['reserved']:.0f}MiB"
+                    f" peak_alloc={mem['peak_allocated']:.0f}MiB"
+                    f" peak_reserved={mem['peak_reserved']:.0f}MiB"
+                )
+            lr0 = optimizer.param_groups[0].get("lr", None)
+            lr_str = f"{lr0:.2e}" if isinstance(lr0, float) else "?"
+            print_log(
+                f"Epoch {epoch + 1} Iter {i + 1}/{len(train_loader)}: "
+                f"loss={loss.item():.4f} avg={losses.avg:.4f} lr={lr_str} "
+                f"[{format_duration(elapsed)}<{format_duration(eta)}, {avg_iter_time:.2f}s/it]"
+                f"{mem_str}"
+            )
 
         if (not did_log_once) and i == 0 and _is_main_process():
             try:

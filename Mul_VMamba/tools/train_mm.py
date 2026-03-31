@@ -60,6 +60,15 @@ def reset_cuda_peak_memory_stats():
         torch.cuda.reset_peak_memory_stats()
 
 
+def format_duration(seconds):
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f'{hours:02d}:{minutes:02d}:{secs:02d}'
+    return f'{minutes:02d}:{secs:02d}'
+
+
 def main(cfg, gpu, save_dir):
     start = time.time()
     best_mIoU = 0.0
@@ -172,6 +181,7 @@ def main(cfg, gpu, save_dir):
         model.train()
         apply_freeze_bn_if_needed(model)
         reset_cuda_peak_memory_stats()
+        epoch_start_time = time.time()
         if train_cfg['DDP']: sampler.set_epoch(epoch)
 
         train_loss = 0.0        
@@ -241,6 +251,19 @@ def main(cfg, gpu, save_dir):
                 f"Epoch: [{epoch+1}/{epochs}] Iter: [{iter+1}/{iters_per_epoch}] "
                 f"LR: {lr:.8f} Loss: {train_loss / (iter+1):.8f}{mem_str}"
             )
+            if ((iter + 1) % 100 == 0) and ((train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP'])):
+                elapsed = time.time() - epoch_start_time
+                avg_iter_time = elapsed / (iter + 1)
+                eta = avg_iter_time * (iters_per_epoch - (iter + 1))
+                logger.info(
+                    'Epoch %d Iter %d/%d [%s<%s, %.2fs/it]',
+                    epoch + 1,
+                    iter + 1,
+                    iters_per_epoch,
+                    format_duration(elapsed),
+                    format_duration(eta),
+                    avg_iter_time,
+                )
         
         train_loss /= iter+1
         if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
