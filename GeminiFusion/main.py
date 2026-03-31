@@ -30,6 +30,26 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+try:
+    from torch.amp import autocast as _amp_autocast
+    from torch.amp import GradScaler as _AmpGradScaler
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast("cuda", enabled=enabled, dtype=dtype)
+
+    def make_grad_scaler(enabled):
+        return _AmpGradScaler("cuda", enabled=enabled)
+
+except ImportError:
+    from torch.cuda.amp import autocast as _amp_autocast
+    from torch.cuda.amp import GradScaler as _AmpGradScaler
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast(enabled=enabled, dtype=dtype)
+
+    def make_grad_scaler(enabled):
+        return _AmpGradScaler(enabled=enabled)
+
 from utils import *
 import utils.helpers as helpers
 from utils.optimizer import PolyWarmupAdamW, get_fair_param_groups
@@ -664,7 +684,7 @@ def train(
 
         # Forward pass
         try:
-            with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+            with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
                 outputs, masks = segmenter(inputs)
         except RuntimeError as e:
             # If the very first forward OOMs, emit memory stats to help diagnosis.
@@ -821,7 +841,7 @@ def sliding_window_inference(
             crop_inputs = [x[:, :, h_start:h_end, w_start:w_end] for x in inputs]
 
             # Forward pass
-            with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+            with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
                 outputs, _ = segmenter(crop_inputs)
             crop_output = outputs[-1]  # Use ensemble output
 
@@ -921,7 +941,7 @@ def validate(
                 outputs_for_conf = [ensemble_output]
             else:
                 # Whole image inference (fast, uses resized input from dataloader)
-                with torch.amp.autocast("cuda", enabled=amp_enabled, dtype=amp_dtype):
+                with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
                     outputs, _ = segmenter(inputs)
                 outputs_for_conf = outputs
 
@@ -1217,7 +1237,7 @@ def main():
     )
 
     # AMP scaler (enabled/disabled via args.amp)
-    scaler = torch.amp.GradScaler("cuda", enabled=args.amp and amp_dtype == torch.float16)
+    scaler = make_grad_scaler(args.amp and amp_dtype == torch.float16)
 
     total_params = compute_params(segmenter)
     trainable_params = sum(p.numel() for p in segmenter.parameters() if p.requires_grad)

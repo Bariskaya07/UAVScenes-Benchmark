@@ -26,6 +26,26 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 try:
+    from torch.amp import autocast as _amp_autocast
+    from torch.amp import GradScaler as _AmpGradScaler
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast('cuda', enabled=enabled, dtype=dtype)
+
+    def make_grad_scaler(enabled):
+        return _AmpGradScaler('cuda', enabled=enabled)
+
+except ImportError:
+    from torch.cuda.amp import autocast as _amp_autocast
+    from torch.cuda.amp import GradScaler as _AmpGradScaler
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast(enabled=enabled, dtype=dtype)
+
+    def make_grad_scaler(enabled):
+        return _AmpGradScaler(enabled=enabled)
+
+try:
     from fvcore.nn import FlopCountAnalysis
     FVCORE_AVAILABLE = True
 except ImportError:
@@ -314,7 +334,7 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
         label = sample['label'].to(device)
 
         # Forward pass with AMP
-        with torch.amp.autocast('cuda', enabled=amp_enabled, dtype=amp_dtype):
+        with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
             outputs, masks = model([rgb, hag])
             loss, seg_loss, l1_loss = compute_loss(
                 outputs, label, masks,
@@ -528,7 +548,7 @@ def main():
 
     # AMP scaler
     amp_dtype = get_amp_dtype(cfg)
-    scaler = torch.amp.GradScaler('cuda', enabled=cfg.training.amp and amp_dtype == torch.float16)
+    scaler = make_grad_scaler(cfg.training.amp and amp_dtype == torch.float16)
 
     # Resume from checkpoint
     start_epoch = 0

@@ -43,7 +43,25 @@ from torch.utils.data import DataLoader
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
-from torch.amp import autocast, GradScaler
+try:
+    from torch.amp import autocast as _amp_autocast
+    from torch.amp import GradScaler as _AmpGradScaler
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast('cuda', enabled=enabled, dtype=dtype)
+
+    def make_grad_scaler(enabled):
+        return _AmpGradScaler('cuda', enabled=enabled)
+
+except ImportError:
+    from torch.cuda.amp import autocast as _amp_autocast
+    from torch.cuda.amp import GradScaler as _AmpGradScaler
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast(enabled=enabled, dtype=dtype)
+
+    def make_grad_scaler(enabled):
+        return _AmpGradScaler(enabled=enabled)
 try:
     from fvcore.nn import FlopCountAnalysis
     FVCORE_AVAILABLE = True
@@ -504,7 +522,7 @@ def train_one_epoch(model, train_loader, optimizer, criterion, cfg,
         target = sample['mask'].to(device).long()
 
         # Forward pass with AMP
-        with autocast('cuda', enabled=amp_enabled, dtype=amp_dtype):
+        with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
             output = model(rgb, hag)
 
             # Upsample to target size
@@ -853,7 +871,7 @@ def main():
 
     # AMP scaler
     amp_dtype = get_amp_dtype(cfg)
-    scaler = GradScaler('cuda', enabled=cfg.training.amp and amp_dtype == torch.float16)
+    scaler = make_grad_scaler(cfg.training.amp and amp_dtype == torch.float16)
 
     # Resume from checkpoint
     start_epoch = 0
