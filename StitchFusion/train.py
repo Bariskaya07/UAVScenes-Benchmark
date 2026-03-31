@@ -14,6 +14,26 @@ from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
 try:
+    from torch.amp import autocast as _amp_autocast
+    from torch.amp import GradScaler as _AmpGradScaler
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast('cuda', enabled=enabled, dtype=dtype)
+
+    def make_grad_scaler(enabled):
+        return _AmpGradScaler('cuda', enabled=enabled)
+
+except ImportError:
+    from torch.cuda.amp import autocast as _amp_autocast
+    from torch.cuda.amp import GradScaler as _AmpGradScaler
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast(enabled=enabled, dtype=dtype)
+
+    def make_grad_scaler(enabled):
+        return _AmpGradScaler(enabled=enabled)
+
+try:
     from fvcore.nn import FlopCountAnalysis
 
     FVCORE_AVAILABLE = True
@@ -260,7 +280,7 @@ def main():
 
         amp_dtype = get_amp_dtype()
         use_grad_scaler = torch.cuda.is_available() and amp_dtype == torch.float16
-        scaler = torch.amp.GradScaler('cuda', enabled=use_grad_scaler)
+        scaler = make_grad_scaler(use_grad_scaler)
         device = torch.device(
             f'cuda:{engine.local_rank}'
             if engine.distributed and torch.cuda.is_available()
@@ -330,7 +350,7 @@ def main():
                     end = time.time()
                     continue
 
-                with torch.amp.autocast('cuda', enabled=torch.cuda.is_available(), dtype=amp_dtype):
+                with amp_autocast(enabled=torch.cuda.is_available(), dtype=amp_dtype):
                     loss = model(imgs, modal_xs, gts)
 
                 if torch.isnan(loss) or torch.isinf(loss):
