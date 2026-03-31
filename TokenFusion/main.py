@@ -92,6 +92,23 @@ def get_amp_dtype(cfg):
     return resolve_amp_dtype(getattr(cfg.training, 'amp_dtype', 'bf16'))
 
 
+def get_cuda_memory_stats_mb():
+    if not torch.cuda.is_available():
+        return None
+    scale = 1024 ** 2
+    return {
+        'allocated': torch.cuda.memory_allocated() / scale,
+        'reserved': torch.cuda.memory_reserved() / scale,
+        'peak_allocated': torch.cuda.max_memory_allocated() / scale,
+        'peak_reserved': torch.cuda.max_memory_reserved() / scale,
+    }
+
+
+def reset_cuda_peak_memory_stats():
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='TokenFusion UAVScenes Training')
     parser.add_argument('--config', type=str, default='configs/uavscenes_rgb_hag.yaml',
@@ -309,6 +326,7 @@ def compute_loss(outputs, target, masks, lamda, ignore_label=255):
 def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, logger):
     """Train for one epoch."""
     model.train()
+    reset_cuda_peak_memory_stats()
     if getattr(cfg.training, 'freeze_bn', False):
         for module in model.modules():
             if isinstance(module, nn.BatchNorm2d):
@@ -391,6 +409,15 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
         # Logging
         if (i + 1) % cfg.logging.print_freq == 0:
             current_lr = optimizer.get_lr()
+            mem = get_cuda_memory_stats_mb()
+            mem_str = ''
+            if mem is not None:
+                mem_str = (
+                    f' alloc={mem["allocated"]:.0f}MiB'
+                    f' reserved={mem["reserved"]:.0f}MiB'
+                    f' peak_alloc={mem["peak_allocated"]:.0f}MiB'
+                    f' peak_reserved={mem["peak_reserved"]:.0f}MiB'
+                )
             logger.info(
                 f'Epoch [{epoch}][{i + 1}/{num_iters}] '
                 f'Loss: {loss_meter.avg:.4f} '
@@ -398,7 +425,17 @@ def train_one_epoch(model, train_loader, optimizer, cfg, epoch, device, scaler, 
                 f'L1: {l1_loss_meter.avg:.6f} '
                 f'LR: {current_lr:.2e} '
                 f'Time: {batch_time.avg:.3f}s'
+                f'{mem_str}'
             )
+
+    mem = get_cuda_memory_stats_mb()
+    if mem is not None:
+        logger.info(
+            'Epoch %d peak memory: peak_alloc=%.0fMiB peak_reserved=%.0fMiB',
+            epoch,
+            mem['peak_allocated'],
+            mem['peak_reserved'],
+        )
 
     return loss_meter.avg
 

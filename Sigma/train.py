@@ -81,6 +81,23 @@ def set_seed(seed):
     cudnn.deterministic = True
     cudnn.benchmark = False
 
+
+def get_cuda_memory_stats_mb():
+    if not torch.cuda.is_available():
+        return None
+    scale = 1024 ** 2
+    return {
+        'allocated': torch.cuda.memory_allocated() / scale,
+        'reserved': torch.cuda.memory_reserved() / scale,
+        'peak_allocated': torch.cuda.max_memory_allocated() / scale,
+        'peak_reserved': torch.cuda.max_memory_reserved() / scale,
+    }
+
+
+def reset_cuda_peak_memory_stats():
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
 with Engine(custom_parser=parser) as engine:
     args = parser.parse_args()
     print(args)
@@ -294,6 +311,7 @@ with Engine(custom_parser=parser) as engine:
         bar_format = '{desc}[{elapsed}<{remaining},{rate_fmt}]'
         pbar = tqdm(range(niters_per_epoch), file=sys.stdout,
                     bar_format=bar_format)
+        reset_cuda_peak_memory_stats()
         dataloader = iter(train_loader)
 
         sum_loss = 0
@@ -358,23 +376,53 @@ with Engine(custom_parser=parser) as engine:
             if engine.distributed:
                 if dist.get_rank() == 0:
                     sum_loss += reduce_loss.item()
+                    mem = get_cuda_memory_stats_mb()
                     print_str = 'Epoch {}/{}'.format(epoch, config.nepochs) \
                             + ' Iter {}/{}:'.format(idx + 1, niters_per_epoch) \
                             + ' lr=%.4e' % lr \
                             + ' loss=%.4f total_loss=%.4f' % (reduce_loss.item(), (sum_loss / (idx + 1)))
+                    if mem is not None:
+                        print_str += (
+                            ' alloc=%.0fMiB reserved=%.0fMiB peak_alloc=%.0fMiB peak_reserved=%.0fMiB'
+                            % (
+                                mem['allocated'],
+                                mem['reserved'],
+                                mem['peak_allocated'],
+                                mem['peak_reserved'],
+                            )
+                        )
                     pbar.set_description(print_str, refresh=False)
             else:
                 sum_loss += loss.item()
+                mem = get_cuda_memory_stats_mb()
                 print_str = 'Epoch {}/{}'.format(epoch, config.nepochs) \
                         + ' Iter {}/{}:'.format(idx + 1, niters_per_epoch) \
                         + ' lr=%.4e' % lr \
                         + ' loss=%.4f total_loss=%.4f' % (loss.item(), (sum_loss / (idx + 1)))
+                if mem is not None:
+                    print_str += (
+                        ' alloc=%.0fMiB reserved=%.0fMiB peak_alloc=%.0fMiB peak_reserved=%.0fMiB'
+                        % (
+                            mem['allocated'],
+                            mem['reserved'],
+                            mem['peak_allocated'],
+                            mem['peak_reserved'],
+                        )
+                    )
                 pbar.set_description(print_str, refresh=False)
             del loss
             
         
         if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
             tb.add_scalar('train_loss', sum_loss / len(pbar), epoch)
+            mem = get_cuda_memory_stats_mb()
+            if mem is not None:
+                logger.info(
+                    'Epoch %d peak memory: peak_alloc=%.0fMiB peak_reserved=%.0fMiB',
+                    epoch,
+                    mem['peak_allocated'],
+                    mem['peak_reserved'],
+                )
 
         # Save resume checkpoint every epoch (single overwritten file, safe for spot VMs)
         if (engine.distributed and engine.local_rank == 0) or not engine.distributed:

@@ -95,6 +95,23 @@ def _format_gb(num_bytes: int) -> str:
     return f"{num_bytes / (1024 ** 3):.2f} GB"
 
 
+def get_cuda_memory_stats_mb():
+    if not torch.cuda.is_available():
+        return None
+    scale = 1024 ** 2
+    return {
+        "allocated": torch.cuda.memory_allocated() / scale,
+        "reserved": torch.cuda.memory_reserved() / scale,
+        "peak_allocated": torch.cuda.max_memory_allocated() / scale,
+        "peak_reserved": torch.cuda.max_memory_reserved() / scale,
+    }
+
+
+def reset_cuda_peak_memory_stats():
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+
 def resolve_amp_dtype(dtype_name: str):
     """Map AMP dtype flag to torch dtype."""
     dtype_name = str(dtype_name).lower()
@@ -618,6 +635,7 @@ def train(
     """Train for one epoch."""
     train_loader.dataset.set_stage("train")
     segmenter.train()
+    reset_cuda_peak_memory_stats()
 
     if freeze_bn:
         for module in segmenter.modules():
@@ -781,13 +799,22 @@ def train(
         if pbar is not None:
             try:
                 lr0 = optimizer.param_groups[0].get("lr", None)
-                pbar.set_postfix(
-                    {
-                        "loss": f"{loss.item():.3f}",
-                        "avg": f"{losses.avg:.3f}",
-                        "lr": f"{lr0:.2e}" if isinstance(lr0, float) else "?",
-                    }
-                )
+                postfix = {
+                    "loss": f"{loss.item():.3f}",
+                    "avg": f"{losses.avg:.3f}",
+                    "lr": f"{lr0:.2e}" if isinstance(lr0, float) else "?",
+                }
+                mem = get_cuda_memory_stats_mb()
+                if mem is not None:
+                    postfix.update(
+                        {
+                            "alloc": f'{mem["allocated"]:.0f}MiB',
+                            "reserved": f'{mem["reserved"]:.0f}MiB',
+                            "peak_a": f'{mem["peak_allocated"]:.0f}MiB',
+                            "peak_r": f'{mem["peak_reserved"]:.0f}MiB',
+                        }
+                    )
+                pbar.set_postfix(postfix)
             except Exception:
                 pass
 
@@ -810,6 +837,13 @@ def train(
 
     if is_main:
         print_log(f"[Train] epoch={epoch} avg_loss={losses.avg:.4f}")
+        mem = get_cuda_memory_stats_mb()
+        if mem is not None:
+            print_log(
+                f"[Train] epoch={epoch} peak memory: "
+                f"peak_alloc={mem['peak_allocated']:.0f}MiB "
+                f"peak_reserved={mem['peak_reserved']:.0f}MiB"
+            )
 
 
 def sliding_window_inference(

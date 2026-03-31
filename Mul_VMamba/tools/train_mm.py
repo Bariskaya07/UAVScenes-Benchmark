@@ -43,6 +43,23 @@ def resolve_repo_path(path_str):
     return REPO_ROOT / path
 
 
+def get_cuda_memory_stats_mb():
+    if not torch.cuda.is_available():
+        return None
+    scale = 1024 ** 2
+    return {
+        'allocated': torch.cuda.memory_allocated() / scale,
+        'reserved': torch.cuda.memory_reserved() / scale,
+        'peak_allocated': torch.cuda.max_memory_allocated() / scale,
+        'peak_reserved': torch.cuda.max_memory_reserved() / scale,
+    }
+
+
+def reset_cuda_peak_memory_stats():
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+
 def main(cfg, gpu, save_dir):
     start = time.time()
     best_mIoU = 0.0
@@ -154,6 +171,7 @@ def main(cfg, gpu, save_dir):
     for epoch in range(start_epoch, epochs):
         model.train()
         apply_freeze_bn_if_needed(model)
+        reset_cuda_peak_memory_stats()
         if train_cfg['DDP']: sampler.set_epoch(epoch)
 
         train_loss = 0.0        
@@ -210,12 +228,31 @@ def main(cfg, gpu, save_dir):
             if lr <= 1e-8:
                 lr = 1e-8 # minimum of lr
             train_loss += loss.item()
-
-            pbar.set_description(f"Epoch: [{epoch+1}/{epochs}] Iter: [{iter+1}/{iters_per_epoch}] LR: {lr:.8f} Loss: {train_loss / (iter+1):.8f}")
+            mem = get_cuda_memory_stats_mb()
+            mem_str = ''
+            if mem is not None:
+                mem_str = (
+                    f" alloc={mem['allocated']:.0f}MiB"
+                    f" reserved={mem['reserved']:.0f}MiB"
+                    f" peak_alloc={mem['peak_allocated']:.0f}MiB"
+                    f" peak_reserved={mem['peak_reserved']:.0f}MiB"
+                )
+            pbar.set_description(
+                f"Epoch: [{epoch+1}/{epochs}] Iter: [{iter+1}/{iters_per_epoch}] "
+                f"LR: {lr:.8f} Loss: {train_loss / (iter+1):.8f}{mem_str}"
+            )
         
         train_loss /= iter+1
         if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
             writer.add_scalar('train/loss', train_loss, epoch)
+            mem = get_cuda_memory_stats_mb()
+            if mem is not None:
+                logger.info(
+                    'Epoch %d peak memory: peak_alloc=%.0fMiB peak_reserved=%.0fMiB',
+                    epoch + 1,
+                    mem['peak_allocated'],
+                    mem['peak_reserved'],
+                )
         torch.cuda.empty_cache()
 
         if (train_cfg['DDP'] and torch.distributed.get_rank() == 0) or (not train_cfg['DDP']):
