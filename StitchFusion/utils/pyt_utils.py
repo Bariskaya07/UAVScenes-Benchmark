@@ -204,6 +204,13 @@ def load_model(model, model_file, is_restore=False):
     return model
 
 def parse_devices(input_devices):
+    input_devices = (input_devices or '').strip()
+    if input_devices == '':
+        if torch.cuda.device_count() == 0:
+            logger.info('using devices cpu')
+            return []
+        input_devices = '0'
+
     if input_devices.endswith('*'):
         devices = list(range(torch.cuda.device_count()))
         return devices

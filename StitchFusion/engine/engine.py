@@ -58,7 +58,7 @@ class Engine(object):
 
     def inject_default_parser(self):
         p = self.parser
-        p.add_argument('-d', '--devices', default='', help='set data parallel training')
+        p.add_argument('-d', '--devices', default='0', help='set data parallel training')
         p.add_argument(
             '-c',
             '--continue',
@@ -152,4 +152,3 @@ class Engine(object):
                 "A exception occurred during Engine initialization, give up running process"
             )
             return False
-
