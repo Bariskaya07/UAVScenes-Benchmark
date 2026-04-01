@@ -100,9 +100,11 @@ scheduler:
 # Loss Configuration
 # ==============================================================================
 loss:
-  # Cross entropy + L1 sparsity
-  # NOTE: Paper uses 1e-4 for image translation, 1e-3 for segmentation
-  lamda: 1.0e-3  # L1 sparsity weight for masks (segmentation setting)
+  # Cross entropy + mean-normalized L1 sparsity.
+  # The upstream segmentation recipe uses sum-based L1 with smaller crops.
+  # For the benchmark's 768x768 batch-8 regime we normalize by mean so the
+  # regularizer stays resolution/batch independent, then use a moderate weight.
+  lamda: 5.0e-2
 
 # ==============================================================================
 # TokenFusion Configuration

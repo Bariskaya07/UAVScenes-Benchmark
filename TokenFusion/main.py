@@ -291,7 +291,7 @@ def compute_loss(outputs, target, masks, lamda, ignore_label=255):
     """
     Compute TokenFusion loss.
 
-    Loss = NLLLoss(output, target) + lamda * L1_loss(masks)
+    Loss = NLLLoss(output, target) + lamda * mean-normalized L1_loss(masks)
 
     Args:
         outputs: List of [rgb_pred, hag_pred, ensemble_pred]
@@ -320,12 +320,13 @@ def compute_loss(outputs, target, masks, lamda, ignore_label=255):
         total_loss += loss
         seg_loss += loss.item()
 
-    # L1 sparsity loss on masks
+    # Mean-normalized L1 sparsity keeps the regularizer stable across
+    # resolution and batch-size changes in the benchmark setting.
     l1_loss = 0
     if lamda > 0 and masks:
         for mask in masks:
             for m in mask:
-                l1_loss += torch.abs(m).sum()
+                l1_loss += torch.abs(m).mean()
         total_loss += lamda * l1_loss
         l1_loss = l1_loss.item()
 

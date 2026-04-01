@@ -136,7 +136,7 @@ def test_config_parsing():
         assert cfg['dataset']['num_classes'] == 19, "Wrong num_classes"
         assert cfg['training']['image_size'] == 768, "Wrong image_size"
         assert cfg['training']['batch_size'] == 8, "Wrong batch_size"
-        assert cfg['loss']['lamda'] == 1e-3, "Wrong lamda (should be 1e-3 for segmentation)"
+        assert cfg['loss']['lamda'] == 5e-2, "Wrong lamda (should be 5e-2 for benchmark mean-normalized L1)"
         assert cfg['tokenfusion']['mask_threshold'] == 0.02, "Wrong threshold"
         assert cfg['hag']['max_meters'] == 50.0, "Wrong HAG max"
 

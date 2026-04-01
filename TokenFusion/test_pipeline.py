@@ -191,7 +191,7 @@ def test_loss_computation():
         # Compute loss
         print("  Computing loss...", end=" ")
         total_loss = 0
-        lamda = 1e-3
+        lamda = 5e-2
 
         for output in outputs[:2]:
             output_up = F.interpolate(output, size=target.shape[1:], mode='bilinear', align_corners=False)
@@ -200,7 +200,7 @@ def test_loss_computation():
             total_loss += loss
 
         # L1 sparsity
-        l1_loss = sum([torch.abs(m).sum() for mask in masks for m in mask])
+        l1_loss = sum([torch.abs(m).mean() for mask in masks for m in mask])
         total_loss += lamda * l1_loss
         print("✓")
 
@@ -438,7 +438,7 @@ def test_config_loading():
         assert cfg['model']['backbone'] == 'mit_b2', "Wrong backbone"
         assert cfg['dataset']['num_classes'] == 19, "Wrong num_classes"
         assert cfg['training']['image_size'] == 768, "Wrong image_size"
-        assert cfg['loss']['lamda'] == 1e-3, "Wrong lamda"
+        assert cfg['loss']['lamda'] == 5e-2, "Wrong lamda"
 
         print("\n✅ Config loading successful!\n")
         return True
