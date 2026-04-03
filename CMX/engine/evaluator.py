@@ -15,13 +15,26 @@ from utils.transforms import pad_image_to_shape, normalize
 
 logger = get_logger()
 
+try:
+    from torch.amp import autocast as _amp_autocast
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast('cuda', enabled=enabled, dtype=dtype)
+
+except ImportError:
+    from torch.cuda.amp import autocast as _amp_autocast
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast(enabled=enabled, dtype=dtype)
+
 NEW_EPOCH_CKPT_PATTERN = re.compile(r"^cmx_epoch_(\d+)\.pth$")
 LEGACY_EPOCH_CKPT_PATTERN = re.compile(r"^epoch-(\d+)\.pth$")
 
 
 class Evaluator(object):
     def __init__(self, dataset, class_num, norm_mean, norm_std, network, multi_scales, 
-                is_flip, devices, verbose=False, save_path=None, show_image=False):
+                is_flip, devices, verbose=False, save_path=None, show_image=False,
+                use_amp=False, amp_dtype=torch.bfloat16):
         self.eval_time = 0
         self.dataset = dataset
         self.ndata = self.dataset.get_length()
@@ -42,6 +55,8 @@ class Evaluator(object):
         if save_path is not None:
             ensure_dir(save_path)
         self.show_image = show_image
+        self.use_amp = use_amp
+        self.amp_dtype = amp_dtype
 
     def run(self, model_path, model_indice, log_file, log_file_link):
         """There are four evaluation modes:
@@ -280,14 +295,15 @@ class Evaluator(object):
             self.val_func.eval()
             self.val_func.to(input_data.get_device())
             with torch.no_grad():
-                score = self.val_func(input_data)
-                score = score[0]
+                with amp_autocast(enabled=self.use_amp, dtype=self.amp_dtype):
+                    score = self.val_func(input_data)
+                    score = score[0]
 
-                if self.is_flip:
-                    input_data = input_data.flip(-1)
-                    score_flip = self.val_func(input_data)
-                    score_flip = score_flip[0]
-                    score += score_flip.flip(-1)
+                    if self.is_flip:
+                        input_data = input_data.flip(-1)
+                        score_flip = self.val_func(input_data)
+                        score_flip = score_flip[0]
+                        score += score_flip.flip(-1)
                 # score = torch.exp(score)
                 # score = score.data
 
@@ -396,14 +412,15 @@ class Evaluator(object):
             self.val_func.eval()
             self.val_func.to(input_data.get_device())
             with torch.no_grad():
-                score = self.val_func(input_data, input_modal_x)
-                score = score[0]
-                if self.is_flip:
-                    input_data = input_data.flip(-1)
-                    input_modal_x = input_modal_x.flip(-1)
-                    score_flip = self.val_func(input_data, input_modal_x)
-                    score_flip = score_flip[0]
-                    score += score_flip.flip(-1)
+                with amp_autocast(enabled=self.use_amp, dtype=self.amp_dtype):
+                    score = self.val_func(input_data, input_modal_x)
+                    score = score[0]
+                    if self.is_flip:
+                        input_data = input_data.flip(-1)
+                        input_modal_x = input_modal_x.flip(-1)
+                        score_flip = self.val_func(input_data, input_modal_x)
+                        score_flip = score_flip[0]
+                        score += score_flip.flip(-1)
                 # Fix 8: Do NOT apply exp() to logits (matching CMNeXt)
                 # CMNeXt uses raw logits for argmax, exp() distorts relative ordering
                 pass

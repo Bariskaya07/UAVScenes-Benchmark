@@ -110,6 +110,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     all_dev = parse_devices(args.devices)
+    amp_dtype_name = str(getattr(config, 'amp_dtype', 'bf16')).lower()
+    amp_dtype = torch.bfloat16 if amp_dtype_name == 'bf16' else torch.float16
+    logger.info('AMP: enabled (dtype=%s)', amp_dtype_name)
     network = segmodel(cfg=config, criterion=None, norm_layer=nn.BatchNorm2d)
     data_setting = {'data_root': config.dataset_path}
     val_pre = ValPre(resize_to=None)
@@ -131,5 +134,7 @@ if __name__ == '__main__':
             args.verbose,
             args.save_path,
             args.show_image,
+            use_amp=torch.cuda.is_available(),
+            amp_dtype=amp_dtype,
         )
         segmentor.run(config.checkpoint_dir, args.epochs, results_log_file, results_log_link)

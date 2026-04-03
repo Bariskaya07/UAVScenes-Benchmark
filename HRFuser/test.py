@@ -28,6 +28,18 @@ from tqdm import tqdm
 from models.hrfuser_segformer import HRFuserSegFormer
 from datasets.uavscenes import UAVScenesDataset, CLASS_NAMES
 
+try:
+    from torch.amp import autocast as _amp_autocast
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast('cuda', enabled=enabled, dtype=dtype)
+
+except ImportError:
+    from torch.cuda.amp import autocast as _amp_autocast
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast(enabled=enabled, dtype=dtype)
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -78,6 +90,15 @@ def load_torch_checkpoint(path, map_location):
         return torch.load(path, map_location=map_location)
 
 
+def resolve_amp_dtype(dtype_name):
+    dtype_name = str(dtype_name).lower()
+    if dtype_name == 'bf16':
+        return torch.bfloat16
+    if dtype_name == 'fp16':
+        return torch.float16
+    raise ValueError(f"Unsupported AMP dtype '{dtype_name}'. Expected 'bf16' or 'fp16'.")
+
+
 def top_confused_pairs(conf_mat, class_names, top_k=5):
     """Return top confused class pairs as (true_name, pred_name, count)."""
     cm_copy = conf_mat.copy()
@@ -98,7 +119,7 @@ def top_confused_pairs(conf_mat, class_names, top_k=5):
 # Sliding window inference
 # ---------------------------------------------------------------------------
 
-def slide_inference(model, rgb, hag, num_classes, crop_size, stride):
+def slide_inference(model, rgb, hag, num_classes, crop_size, stride, amp_enabled=False, amp_dtype=torch.bfloat16):
     """Sliding window inference."""
     B, _, H, W = rgb.shape
     crop_h, crop_w = crop_size, crop_size
@@ -122,7 +143,8 @@ def slide_inference(model, rgb, hag, num_classes, crop_size, stride):
             crop_rgb = rgb[:, :, y1:y2, x1:x2]
             crop_hag = hag[:, :, y1:y2, x1:x2]
 
-            crop_pred = model(crop_rgb, crop_hag)
+            with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
+                crop_pred = model(crop_rgb, crop_hag)
 
             if crop_pred.shape[2:] != (y2 - y1, x2 - x1):
                 crop_pred = F.interpolate(crop_pred, size=(y2 - y1, x2 - x1),
@@ -146,6 +168,9 @@ def main():
     # Load config
     cfg = load_config(args.config)
     num_classes = cfg.dataset.num_classes
+    amp_enabled = bool(getattr(cfg.training, 'amp', True))
+    amp_dtype_name = getattr(cfg.training, 'amp_dtype', 'bf16')
+    amp_dtype = resolve_amp_dtype(amp_dtype_name)
 
     # Create model
     model = HRFuserSegFormer(
@@ -180,6 +205,7 @@ def main():
 
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params / 1e6:.2f}M")
+    print(f"AMP: {amp_enabled} (dtype={amp_dtype_name})")
 
     # Create dataset
     from torchvision import transforms
@@ -224,7 +250,8 @@ def main():
             # Sliding window inference
             output = slide_inference(
                 model, rgb, hag, num_classes,
-                cfg.evaluation.slide_size, cfg.evaluation.slide_stride)
+                cfg.evaluation.slide_size, cfg.evaluation.slide_stride,
+                amp_enabled=amp_enabled, amp_dtype=amp_dtype)
 
             # Optional flip augmentation
             if args.flip_test:
@@ -232,7 +259,8 @@ def main():
                 hag_flip = torch.flip(hag, dims=[3])
                 output_flip = slide_inference(
                     model, rgb_flip, hag_flip, num_classes,
-                    cfg.evaluation.slide_size, cfg.evaluation.slide_stride)
+                    cfg.evaluation.slide_size, cfg.evaluation.slide_stride,
+                    amp_enabled=amp_enabled, amp_dtype=amp_dtype)
                 output_flip = torch.flip(output_flip, dims=[3])
                 output = (output + output_flip) / 2.0
 

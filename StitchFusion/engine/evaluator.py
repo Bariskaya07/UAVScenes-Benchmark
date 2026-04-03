@@ -16,6 +16,18 @@ from utils.transforms import normalize, pad_image_to_shape
 
 logger = get_logger()
 
+try:
+    from torch.amp import autocast as _amp_autocast
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast('cuda', enabled=enabled, dtype=dtype)
+
+except ImportError:
+    from torch.cuda.amp import autocast as _amp_autocast
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast(enabled=enabled, dtype=dtype)
+
 MODEL_SLUG = 'stitchfusion'
 NEW_EPOCH_CKPT_PATTERN = re.compile(r"^stitchfusion_epoch_(\d+)\.pth$")
 LEGACY_EPOCH_CKPT_PATTERN = re.compile(r"^epoch-(\d+)\.pth$")
@@ -35,6 +47,8 @@ class Evaluator(object):
         verbose=False,
         save_path=None,
         show_image=False,
+        use_amp=False,
+        amp_dtype=torch.bfloat16,
     ):
         self.eval_time = 0
         self.dataset = dataset
@@ -56,6 +70,8 @@ class Evaluator(object):
         if save_path is not None:
             ensure_dir(save_path)
         self.show_image = show_image
+        self.use_amp = use_amp
+        self.amp_dtype = amp_dtype
 
     def run(self, model_path, model_indice, log_file, log_file_link):
         if '.pth' in model_indice:
@@ -248,12 +264,14 @@ class Evaluator(object):
         with torch.cuda.device(input_data.get_device()):
             self.val_func.eval()
             self.val_func.to(input_data.get_device())
-            score = self.val_func(input_data)
-            if self.is_flip:
-                input_data = input_data.flip(-1)
-                score_flip = self.val_func(input_data)
-                score += score_flip.flip(-1)
-            score = torch.exp(score[0])
+            with torch.no_grad():
+                with amp_autocast(enabled=self.use_amp, dtype=self.amp_dtype):
+                    score = self.val_func(input_data)
+                    if self.is_flip:
+                        input_data = input_data.flip(-1)
+                        score_flip = self.val_func(input_data)
+                        score += score_flip.flip(-1)
+                score = score[0]
         return score
 
     def process_image(self, img, crop_size=None):
@@ -356,11 +374,13 @@ class Evaluator(object):
         with torch.cuda.device(input_data.get_device()):
             self.val_func.eval()
             self.val_func.to(input_data.get_device())
-            score = self.val_func(input_data, input_modal_x)
-            if self.is_flip:
-                input_data = input_data.flip(-1)
-                input_modal_x = input_modal_x.flip(-1)
-                score_flip = self.val_func(input_data, input_modal_x)
-                score += score_flip.flip(-1)
-            score = torch.exp(score[0])
+            with torch.no_grad():
+                with amp_autocast(enabled=self.use_amp, dtype=self.amp_dtype):
+                    score = self.val_func(input_data, input_modal_x)
+                    if self.is_flip:
+                        input_data = input_data.flip(-1)
+                        input_modal_x = input_modal_x.flip(-1)
+                        score_flip = self.val_func(input_data, input_modal_x)
+                        score += score_flip.flip(-1)
+                score = score[0]
         return score
