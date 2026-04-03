@@ -212,7 +212,7 @@ def sliding_window_inference(model, inputs, cfg):
             else:
                 crop_inputs = inputs[:, :, h_start:h_end, w_start:w_end]
 
-            with autocast():
+            with amp.autocast(device_type='cuda', enabled=(device.type == 'cuda')):
                 crop_logits = model(crop_inputs)
 
             if crop_logits.shape[2:] != (h_end - h_start, w_end - w_start):
