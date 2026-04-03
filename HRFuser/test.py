@@ -206,16 +206,18 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params / 1e6:.2f}M")
     print(f"AMP: {amp_enabled} (dtype={amp_dtype_name})")
+    print(
+        f"Test protocol: native-size sliding window "
+        f"(crop={cfg.evaluation.slide_size}, stride={cfg.evaluation.slide_stride})"
+    )
 
     # Create dataset
     from torchvision import transforms
     from utils.transforms import ToTensor
-    from utils.augmentations_mm import Normalize, Resize
+    from utils.augmentations_mm import Normalize
 
-    slide_size = cfg.evaluation.slide_size
     composed_test = transforms.Compose([
         ToTensor(),
-        Resize([slide_size, slide_size]),
         Normalize(cfg.normalization.rgb_mean, cfg.normalization.rgb_std),
     ])
 
