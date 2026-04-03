@@ -151,13 +151,16 @@ def main(cfg):
     device = torch.device(cfg['DEVICE'])
 
     eval_cfg = cfg['EVAL']
+    test_cfg = cfg.get('TEST', {})
     # Determine eval mode based on split
     # For test set: use TEST.MODE (default: slide for accuracy)
     # For val set: use EVAL.MODE (default: whole for speed)
     split = cfg.get('SPLIT', 'val')  # Can be overridden via config or CLI
     if split == 'test':
-        eval_mode = cfg.get('TEST', {}).get('MODE', 'slide')
+        active_cfg = test_cfg
+        eval_mode = test_cfg.get('MODE', 'slide')
     else:
+        active_cfg = eval_cfg
         eval_mode = eval_cfg.get('MODE', 'whole')
     sliding = (eval_mode == 'slide')
 
@@ -170,7 +173,7 @@ def main(cfg):
     cases = ['motionblur', 'overexposure', 'underexposure', 'lidarjitter', 'eventlowres']
     # cases = [None] # all
     
-    model_path = resolve_repo_path(eval_cfg['MODEL_PATH'])
+    model_path = resolve_repo_path(active_cfg['MODEL_PATH'])
     if not model_path.exists():
         fallback_root = resolve_repo_path(cfg.get('SAVE_DIR', 'output'))
         candidates = sorted(fallback_root.rglob(model_path.name))
@@ -183,7 +186,7 @@ def main(cfg):
     print(f"Split: {split}, Eval mode: {eval_mode} (sliding={sliding})")
 
     exp_time = time.strftime('%Y%m%d_%H%M%S', time.localtime())
-    eval_path = os.path.join(os.path.dirname(eval_cfg['MODEL_PATH']), 'eval_{}.txt'.format(exp_time))
+    eval_path = os.path.join(os.path.dirname(str(active_cfg['MODEL_PATH'])), 'eval_{}.txt'.format(exp_time))
 
     for case in cases:
         dataset_extra_kwargs = {}
@@ -204,20 +207,22 @@ def main(cfg):
 
         model = eval(cfg['MODEL']['NAME'])(cfg['MODEL']['BACKBONE'], dataset.n_classes, cfg['DATASET']['MODALS'])
         state_dict = torch.load(model_path, map_location='cpu', weights_only=False)
+        if isinstance(state_dict, dict) and 'model_state_dict' in state_dict:
+            state_dict = state_dict['model_state_dict']
         msg = model.load_state_dict(state_dict)
         print(msg)
         model = model.to(device)
         sampler_val = None
         if split == 'test':
-            batch_size = cfg.get('TEST', {}).get('BATCH_SIZE', 1)
+            batch_size = active_cfg.get('BATCH_SIZE', 1)
         else:
-            batch_size = eval_cfg['BATCH_SIZE']
+            batch_size = active_cfg['BATCH_SIZE']
         dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=0, pin_memory=False, sampler=sampler_val)
         if True:
             if eval_cfg['MSF']['ENABLE']:
                 acc, macc, f1, mf1, ious, miou = evaluate_msf(model, dataloader, device, eval_cfg['MSF']['SCALES'], eval_cfg['MSF']['FLIP'])
             else:
-                eval_size = tuple(eval_cfg.get('IMAGE_SIZE', [768, 768]))
+                eval_size = tuple(active_cfg.get('IMAGE_SIZE', [768, 768]))
                 acc, macc, f1, mf1, ious, miou = evaluate(model, dataloader, device, eval_size=eval_size, sliding=sliding)
 
             table = {
@@ -227,10 +232,10 @@ def main(cfg):
                 'Acc': acc + [macc]
             }
             print("mIoU : {}".format(miou))
-            print("Results saved in {}".format(eval_cfg['MODEL_PATH']))
+            print("Results saved in {}".format(active_cfg['MODEL_PATH']))
 
         with open(eval_path, 'a+') as f:
-            f.writelines(eval_cfg['MODEL_PATH'])
+            f.writelines(str(active_cfg['MODEL_PATH']))
             f.write("\n============== Eval on {} {} images =================\n".format(case, len(dataset)))
             f.write("\n")
             print(tabulate(table, headers='keys'), file=f)
@@ -242,6 +247,10 @@ if __name__ == '__main__':
     parser.add_argument('--cfg', type=str, default='configs/uavscenes_rgbhagmulmamba.yaml')
     parser.add_argument('--split', type=str, default='val', choices=['val', 'test'],
                         help='Dataset split to evaluate (val or test)')
+    parser.add_argument('--checkpoint', type=str, default='',
+                        help='Override checkpoint path (raw state_dict or checkpoint dict)')
+    parser.add_argument('--batch-size', type=int, default=None,
+                        help='Override batch size for the chosen split')
     args = parser.parse_args()
 
     cfg_path = resolve_repo_path(args.cfg)
@@ -250,6 +259,12 @@ if __name__ == '__main__':
 
     # Set split in config for main() to use
     cfg['SPLIT'] = args.split
+    if args.checkpoint:
+        target_key = 'TEST' if args.split == 'test' else 'EVAL'
+        cfg[target_key]['MODEL_PATH'] = args.checkpoint
+    if args.batch_size is not None:
+        target_key = 'TEST' if args.split == 'test' else 'EVAL'
+        cfg[target_key]['BATCH_SIZE'] = args.batch_size
 
     setup_cudnn()
     # gpu = setup_ddp()
