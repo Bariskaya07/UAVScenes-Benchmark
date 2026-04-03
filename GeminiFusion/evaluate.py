@@ -77,6 +77,12 @@ def get_arguments():
         help="Sliding window stride",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Test batch size",
+    )
+    parser.add_argument(
         "--hag-max-height",
         type=float,
         default=50.0,
@@ -118,14 +124,14 @@ def sliding_window_inference(
         num_classes: Number of output classes
 
     Returns:
-        Segmentation prediction (H, W)
+        Segmentation prediction (B, H, W)
     """
-    _, _, H, W = rgb.shape
+    B, _, H, W = rgb.shape
     device = rgb.device
 
     # Initialize prediction and count maps
-    pred_map = torch.zeros((num_classes, H, W), device=device)
-    count_map = torch.zeros((H, W), device=device)
+    pred_map = torch.zeros((B, num_classes, H, W), device=device)
+    count_map = torch.zeros((B, 1, H, W), device=device)
 
     # Calculate padding if needed
     pad_h = (window_size - H % window_size) % window_size if H < window_size else 0
@@ -136,8 +142,8 @@ def sliding_window_inference(
         rgb = F.pad(rgb, (0, pad_w, 0, pad_h), mode='reflect')
         hag = F.pad(hag, (0, pad_w, 0, pad_h), mode='reflect')
         padded_H, padded_W = rgb.shape[2], rgb.shape[3]
-        pred_map = torch.zeros((num_classes, padded_H, padded_W), device=device)
-        count_map = torch.zeros((padded_H, padded_W), device=device)
+        pred_map = torch.zeros((B, num_classes, padded_H, padded_W), device=device)
+        count_map = torch.zeros((B, 1, padded_H, padded_W), device=device)
     else:
         padded_H, padded_W = H, W
 
@@ -160,8 +166,8 @@ def sliding_window_inference(
                 )
 
             # Accumulate predictions
-            pred_map[:, y:y+window_size, x:x+window_size] += pred[0]
-            count_map[y:y+window_size, x:x+window_size] += 1
+            pred_map[:, :, y:y+window_size, x:x+window_size] += pred
+            count_map[:, :, y:y+window_size, x:x+window_size] += 1
 
     # Handle last column and row if not covered
     if (padded_W - window_size) % stride != 0:
@@ -173,8 +179,8 @@ def sliding_window_inference(
             pred = outputs[-1]
             if pred.shape[2] != window_size:
                 pred = F.interpolate(pred, size=(window_size, window_size), mode='bilinear', align_corners=False)
-            pred_map[:, y:y+window_size, x:x+window_size] += pred[0]
-            count_map[y:y+window_size, x:x+window_size] += 1
+            pred_map[:, :, y:y+window_size, x:x+window_size] += pred
+            count_map[:, :, y:y+window_size, x:x+window_size] += 1
 
     if (padded_H - window_size) % stride != 0:
         y = padded_H - window_size
@@ -185,18 +191,18 @@ def sliding_window_inference(
             pred = outputs[-1]
             if pred.shape[2] != window_size:
                 pred = F.interpolate(pred, size=(window_size, window_size), mode='bilinear', align_corners=False)
-            pred_map[:, y:y+window_size, x:x+window_size] += pred[0]
-            count_map[y:y+window_size, x:x+window_size] += 1
+            pred_map[:, :, y:y+window_size, x:x+window_size] += pred
+            count_map[:, :, y:y+window_size, x:x+window_size] += 1
 
     # Average predictions
     count_map = torch.clamp(count_map, min=1)
-    pred_map = pred_map / count_map.unsqueeze(0)
+    pred_map = pred_map / torch.clamp(count_map, min=1)
 
     # Remove padding
     pred_map = pred_map[:, :H, :W]
 
     # Get class predictions
-    prediction = pred_map.argmax(dim=0).cpu().numpy().astype(np.uint8)
+    prediction = pred_map.argmax(dim=1).cpu().numpy().astype(np.uint8)
 
     return prediction
 
@@ -278,7 +284,7 @@ def evaluate(args):
 
     dataloader = DataLoader(
         dataset,
-        batch_size=1,
+        batch_size=args.batch_size,
         shuffle=False,
         sampler=sampler,
         num_workers=4,
@@ -310,7 +316,7 @@ def evaluate(args):
         for i, sample in iterator:
             rgb = sample["rgb"].to(device).float()
             hag = sample["depth"].to(device).float()
-            gt = sample["mask"][0].numpy().astype(np.uint8)
+            gt = sample["mask"].numpy().astype(np.uint8)
 
             # Inference with timing
             if device.type == "cuda":
@@ -327,7 +333,7 @@ def evaluate(args):
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
             total_time += time.time() - start_time
-            num_images += gt.shape[0] if gt.ndim == 3 else 1
+            num_images += gt.shape[0]
 
             # Update confusion matrix (ignore label 255)
             valid_mask = gt < args.num_classes
@@ -337,8 +343,10 @@ def evaluate(args):
 
             # Save prediction
             if args.save_pred:
-                pred_path = os.path.join(pred_dir, f"pred_{i:04d}.png")
-                cv2.imwrite(pred_path, pred)
+                batch_base = i * rgb.shape[0]
+                for b in range(pred.shape[0]):
+                    pred_path = os.path.join(pred_dir, f"pred_{batch_base + b:04d}.png")
+                    cv2.imwrite(pred_path, pred[b])
 
     # Aggregate across ranks for correct multi-GPU metrics/speed
     if distributed:

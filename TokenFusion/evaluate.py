@@ -25,7 +25,7 @@ from tqdm import tqdm
 from models import WeTr
 from datasets import UAVScenesDataset
 from utils.transforms import ValTransform, TestTransform
-from utils.metrics import ConfusionMatrix, print_metrics, UAVSCENES_CLASSES
+from utils.metrics import UAVScenesMetrics, UAVSCENES_CLASSES
 from utils.helpers import setup_logger, sliding_window_inference
 
 
@@ -46,6 +46,8 @@ def parse_args():
                         help='Path to model checkpoint')
     parser.add_argument('--config', type=str, default='configs/uavscenes_rgb_hag.yaml',
                         help='Path to config file')
+    parser.add_argument('--batch-size', type=int, default=1,
+                        help='Test batch size')
     parser.add_argument('--output', type=str, default=str(Path(__file__).resolve().parent / 'results2'),
                         help='Output directory for predictions')
     parser.add_argument('--save-pred', action='store_true',
@@ -84,7 +86,7 @@ def build_model(cfg, checkpoint_path, device):
     return model
 
 
-def build_dataloader(cfg):
+def build_dataloader(cfg, batch_size_override=None):
     """Build test dataloader.
 
     Note:
@@ -105,9 +107,11 @@ def build_dataloader(cfg):
         hag_max_height=cfg.hag.max_meters
     )
 
+    batch_size = batch_size_override if batch_size_override is not None else 1
+
     val_loader = DataLoader(
         test_dataset,
-        batch_size=1,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=cfg.training.num_workers,
         pin_memory=True
@@ -131,16 +135,10 @@ def evaluate(model, val_loader, cfg, device, save_pred=False, output_dir=None):
     """
     model.eval()
 
-    confusion_matrix = ConfusionMatrix(
+    metrics_obj = UAVScenesMetrics(
         num_classes=cfg.dataset.num_classes,
         ignore_label=cfg.dataset.ignore_label
     )
-
-    # For per-class metrics
-    total_area_intersect = np.zeros(cfg.dataset.num_classes)
-    total_area_union = np.zeros(cfg.dataset.num_classes)
-    total_area_pred = np.zeros(cfg.dataset.num_classes)
-    total_area_target = np.zeros(cfg.dataset.num_classes)
 
     print("\nRunning evaluation with sliding window inference...")
     print(f"  Window size: {cfg.evaluation.slide_size}")
@@ -167,19 +165,25 @@ def evaluate(model, val_loader, cfg, device, save_pred=False, output_dir=None):
         pred = output.argmax(dim=1).cpu()
 
         # Update confusion matrix
-        confusion_matrix.update(pred, label)
+        metrics_obj.update(pred, label)
 
         # Save predictions if requested
         if save_pred and output_dir:
-            save_prediction(pred[0].numpy(), i, output_dir)
-
-    # Compute metrics
-    metrics = confusion_matrix.get_metrics()
+            batch_base = i * rgb.shape[0]
+            for b in range(pred.shape[0]):
+                save_prediction(pred[b].numpy(), batch_base + b, output_dir)
 
     elapsed = time.time() - start_time
+    avg_time_ms = (elapsed / len(val_loader.dataset)) * 1000.0
+    fps = len(val_loader.dataset) / elapsed if elapsed > 0 else 0.0
     print(f'\nEvaluation completed in {elapsed:.2f}s ({elapsed / len(val_loader.dataset):.3f}s per image)')
+    metrics_obj.print_results()
+    print("Inference speed:")
+    print(f"  Average time per image: {avg_time_ms:.1f}ms")
+    print(f"  FPS: {fps:.2f}")
+    metrics_obj.save_results(output_dir or str(Path(__file__).resolve().parent / 'results2'), 'TokenFusion', avg_time_ms, fps, len(val_loader.dataset))
 
-    return metrics
+    return metrics_obj.get_results()
 
 
 def save_prediction(pred, idx, output_dir):
@@ -235,55 +239,6 @@ def get_palette(num_classes):
     return palette
 
 
-def print_detailed_results(metrics, class_names):
-    """Print detailed per-class results."""
-    print("\n" + "=" * 80)
-    print("DETAILED EVALUATION RESULTS")
-    print("=" * 80)
-
-    # Overall metrics
-    print("\nOverall Metrics:")
-    print("-" * 40)
-    print(f"  mIoU:           {metrics['miou'] * 100:6.2f}%")
-    print(f"  Static mIoU:    {metrics['static_miou'] * 100:6.2f}% (classes 0-16)")
-    print(f"  Dynamic mIoU:   {metrics['dynamic_miou'] * 100:6.2f}% (classes 17-18)")
-    print(f"  Pixel Accuracy: {metrics['pixel_acc'] * 100:6.2f}%")
-    print(f"  Mean Accuracy:  {metrics['mean_acc'] * 100:6.2f}%")
-
-    # Per-class results
-    print("\nPer-class IoU:")
-    print("-" * 80)
-    print(f"{'Class':<25} {'IoU':>10} {'Acc':>10} {'Type':>15}")
-    print("-" * 80)
-
-    for i, (name, iou, acc) in enumerate(zip(class_names, metrics['class_iou'], metrics['class_acc'])):
-        class_type = "Dynamic" if i >= 17 else "Static"
-        print(f"{i:2d}. {name:<20} {iou * 100:10.2f}% {acc * 100:10.2f}% {class_type:>15}")
-
-    print("-" * 80)
-
-    # Summary statistics
-    static_iou = metrics['class_iou'][:17]
-    dynamic_iou = metrics['class_iou'][17:]
-
-    print(f"\nStatistic Summary:")
-    print(f"  Static classes mean IoU:  {np.mean(static_iou[static_iou > 0]) * 100:.2f}%")
-    print(f"  Dynamic classes mean IoU: {np.mean(dynamic_iou[dynamic_iou > 0]) * 100:.2f}%")
-
-    # Best and worst classes
-    valid_classes = [(i, name, iou) for i, (name, iou) in enumerate(zip(class_names, metrics['class_iou'])) if iou > 0]
-    if valid_classes:
-        valid_classes.sort(key=lambda x: x[2], reverse=True)
-        print(f"\n  Best 3 classes:")
-        for i, name, iou in valid_classes[:3]:
-            print(f"    {name}: {iou * 100:.2f}%")
-        print(f"\n  Worst 3 classes:")
-        for i, name, iou in valid_classes[-3:]:
-            print(f"    {name}: {iou * 100:.2f}%")
-
-    print("=" * 80 + "\n")
-
-
 def main():
     args = parse_args()
 
@@ -300,18 +255,14 @@ def main():
     print(f"Classes: {cfg.dataset.num_classes}")
 
     # Build dataloader
-    val_loader = build_dataloader(cfg)
+    val_loader = build_dataloader(cfg, batch_size_override=args.batch_size)
 
     # Evaluate
-    metrics = evaluate(
+    evaluate(
         model, val_loader, cfg, device,
         save_pred=args.save_pred,
         output_dir=args.output
     )
-
-    # Print results
-    print_metrics(metrics, UAVSCENES_CLASSES)
-    print_detailed_results(metrics, UAVSCENES_CLASSES)
 
 
 if __name__ == '__main__':

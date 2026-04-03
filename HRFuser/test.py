@@ -53,6 +53,8 @@ def get_arguments():
                         choices=["test", "val"])
     parser.add_argument("--save-image", type=int, default=0,
                         help="Number of images to save (-1 for all)")
+    parser.add_argument("--batch-size", type=int, default=1,
+                        help="Test batch size")
     parser.add_argument("--save-dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "results2"))
     parser.add_argument("--flip-test", action="store_true", default=False,
                         help="Enable horizontal flip test-time augmentation")
@@ -195,7 +197,7 @@ def main():
         transform=composed_test, hag_max_height=cfg.hag.max_meters)
 
     loader = torch.utils.data.DataLoader(
-        dataset, batch_size=1, shuffle=False,
+        dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=cfg.training.num_workers, pin_memory=True)
 
     print(f"Testing on {len(dataset)} images ({args.split} split)")
@@ -206,14 +208,13 @@ def main():
     # Test
     conf_mat = np.zeros((num_classes, num_classes), dtype=np.int64)
     all_times = 0
+    processed_images = 0
 
     with torch.no_grad():
         for i, sample in enumerate(loader):
             rgb = sample["rgb"].float().cuda()
             hag = sample["depth"].float().cuda()
             target = sample["mask"]
-            gt = target[0].data.cpu().numpy().astype(np.uint8)
-            gt_idx = gt < num_classes
 
             start_time = time.time()
 
@@ -235,28 +236,31 @@ def main():
             end_time = time.time()
             all_times += end_time - start_time
 
-            # Convert to prediction
-            pred = cv2.resize(
-                output[0, :num_classes].data.cpu().numpy().transpose(1, 2, 0),
-                target.size()[1:][::-1],
-                interpolation=cv2.INTER_CUBIC
-            ).argmax(axis=2).astype(np.uint8)
+            batch_size = target.shape[0]
+            for b in range(batch_size):
+                gt = target[b].data.cpu().numpy().astype(np.uint8)
+                gt_idx = gt < num_classes
+                pred = cv2.resize(
+                    output[b, :num_classes].data.cpu().numpy().transpose(1, 2, 0),
+                    target.size()[1:][::-1],
+                    interpolation=cv2.INTER_CUBIC
+                ).argmax(axis=2).astype(np.uint8)
 
-            # Update confusion matrix
-            mask = np.ones_like(gt[gt_idx]) == 1
-            k = (gt[gt_idx] >= 0) & (pred[gt_idx] < num_classes) & mask
-            conf_mat += np.bincount(
-                num_classes * gt[gt_idx][k].astype(int) + pred[gt_idx][k],
-                minlength=num_classes ** 2
-            ).reshape(num_classes, num_classes)
+                mask = np.ones_like(gt[gt_idx]) == 1
+                k = (gt[gt_idx] >= 0) & (pred[gt_idx] < num_classes) & mask
+                conf_mat += np.bincount(
+                    num_classes * gt[gt_idx][k].astype(int) + pred[gt_idx][k],
+                    minlength=num_classes ** 2
+                ).reshape(num_classes, num_classes)
 
-            # Save prediction images
-            if args.save_image != 0 and (i < args.save_image or args.save_image == -1):
-                pred_path = os.path.join(args.save_dir, f"pred_{i:04d}.png")
-                cv2.imwrite(pred_path, pred)
+                sample_index = processed_images + b
+                if args.save_image != 0 and (sample_index < args.save_image or args.save_image == -1):
+                    pred_path = os.path.join(args.save_dir, f"pred_{sample_index:04d}.png")
+                    cv2.imwrite(pred_path, pred)
 
-            if (i + 1) % 100 == 0:
-                print(f"Processed {i + 1}/{len(dataset)} images")
+            processed_images += batch_size
+            if processed_images % 100 == 0 or processed_images == len(dataset):
+                print(f"Processed {processed_images}/{len(dataset)} images")
 
     if conf_mat.sum() == 0:
         raise RuntimeError("Confusion matrix is empty. Check labels/predictions in test set.")

@@ -40,6 +40,7 @@ def parse_args():
     parser.add_argument('--cfg', type=str, required=True, help='Config file path')
     parser.add_argument('--checkpoint', type=str, default=None, help='Checkpoint path')
     parser.add_argument('--split', type=str, default='test', choices=['val', 'test'], help='Dataset split to evaluate')
+    parser.add_argument('--batch-size', type=int, default=None, help='Override evaluation batch size')
     parser.add_argument('--save-vis', action='store_true', help='Save visualization')
     parser.add_argument('--vis-dir', type=str, default='output/vis', help='Visualization output dir')
     return parser.parse_args()
@@ -52,7 +53,7 @@ def load_config(cfg_path):
     return cfg
 
 
-def create_dataloader(cfg, split='test'):
+def create_dataloader(cfg, split='test', batch_size_override=None):
     """Create DataLoader for evaluation."""
     dataset_cfg = cfg['DATASET']
     transform = get_test_transform(cfg)
@@ -66,9 +67,16 @@ def create_dataloader(cfg, split='test'):
         hag_max_meters=dataset_cfg.get('HAG_MAX_METERS', 50.0),
     )
 
+    if batch_size_override is not None:
+        batch_size = batch_size_override
+    elif split == 'test':
+        batch_size = cfg.get('TEST', {}).get('BATCH_SIZE', cfg['EVAL']['BATCH_SIZE'])
+    else:
+        batch_size = cfg['EVAL']['BATCH_SIZE']
+
     dataloader = DataLoader(
         dataset,
-        batch_size=cfg['EVAL']['BATCH_SIZE'],
+        batch_size=batch_size,
         shuffle=False,
         num_workers=cfg['TRAIN'].get('WORKERS', 8),
         pin_memory=True
@@ -258,7 +266,7 @@ def main():
 
     # Create dataloader
     print(f"\nCreating dataloader for '{args.split}' split...")
-    dataloader, dataset = create_dataloader(cfg, split=args.split)
+    dataloader, dataset = create_dataloader(cfg, split=args.split, batch_size_override=args.batch_size)
     print(f"{args.split.capitalize()} set: {len(dataset)} samples")
 
     # Create model

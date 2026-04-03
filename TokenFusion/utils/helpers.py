@@ -237,16 +237,15 @@ def sliding_window_inference(
         device: Device
 
     Returns:
-        Prediction tensor [1, num_classes, H, W]
+        Prediction tensor [B, num_classes, H, W]
     """
     model.eval()
 
     B, C, H, W = rgb.shape
-    assert B == 1, "Batch size must be 1 for sliding window inference"
 
     # Initialize output and count tensors
-    output = torch.zeros(1, num_classes, H, W, device=device)
-    count = torch.zeros(1, 1, H, W, device=device)
+    output = torch.zeros(B, num_classes, H, W, device=device)
+    count = torch.zeros(B, 1, H, W, device=device)
 
     # Sliding window
     for y in range(0, H, stride):
