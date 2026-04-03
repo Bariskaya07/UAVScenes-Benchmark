@@ -5,6 +5,7 @@ import time
 import random
 import argparse
 import logging
+import shutil
 from collections import OrderedDict, defaultdict
 
 import torch
@@ -249,9 +250,12 @@ def extant_file(x):
 
 
 def link_file(src, target):
-    if os.path.isdir(target) or os.path.isfile(target):
-        os.system('rm -rf {}'.format(target))
-    os.system('ln -s {} {}'.format(src, target))
+    if os.path.lexists(target):
+        if os.path.isdir(target) and not os.path.islink(target):
+            shutil.rmtree(target)
+        else:
+            os.remove(target)
+    os.symlink(src, target)
 
 
 def ensure_dir(path):

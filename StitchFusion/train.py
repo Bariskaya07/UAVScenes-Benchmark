@@ -48,7 +48,7 @@ from engine.logger import get_logger
 from models.builder import EncoderDecoder as segmodel
 from utils.lr_policy import WarmUpPolyLR
 from utils.metric import compute_score, hist_info
-from utils.pyt_utils import all_reduce_tensor
+from utils.pyt_utils import all_reduce_tensor, link_file
 from utils.visualize import print_iou
 
 sys.path.insert(0, osp.dirname(osp.dirname(osp.abspath(__file__))))
@@ -217,6 +217,10 @@ def log_model_complexity(model, device):
 
 
 def main():
+    global logger
+    logger = get_logger(config.log_dir, config.log_file)
+    link_file(config.log_file, config.link_log_file)
+
     with Engine(custom_parser=parser) as engine:
         args = parser.parse_args()
 
