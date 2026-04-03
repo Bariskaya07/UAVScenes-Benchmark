@@ -46,6 +46,8 @@ def parse_args():
     parser.add_argument('--split', type=str, default='test', choices=['val', 'test'], help='Dataset split to evaluate')
     parser.add_argument('--eval-mode', type=str, default=None, choices=['whole', 'slide'],
                         help='Override evaluation mode from config')
+    parser.add_argument('--legacy-resize-eval', action='store_true',
+                        help='Resize inputs to EVAL.IMAGE_SIZE before whole-image eval to mimic fast validation')
     parser.add_argument('--batch-size', type=int, default=None, help='Override evaluation batch size')
     parser.add_argument('--save-vis', action='store_true', help='Save visualization')
     parser.add_argument('--vis-dir', type=str, default='output/vis', help='Visualization output dir')
@@ -280,7 +282,8 @@ def save_visualization(rgb, pred, target, save_path, dataset):
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vis=False, vis_dir=None, config_key='TEST'):
+def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vis=False, vis_dir=None,
+             config_key='TEST', legacy_resize_eval=False):
     """Evaluate model."""
     metrics = UAVScenesMetrics(num_classes=cfg['MODEL']['NUM_CLASSES'], ignore_label=255)
 
@@ -305,9 +308,25 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
         if eval_mode == 'slide':
             logits = sliding_window_inference(model, inputs, cfg, config_key=config_key)
         else:
+            orig_size = target.shape[-2:]
             amp_enabled, amp_dtype = get_amp_settings(cfg, device)
+            if legacy_resize_eval:
+                eval_size = cfg.get('EVAL', {}).get('IMAGE_SIZE', [768, 768])
+                if isinstance(inputs, (list, tuple)):
+                    model_inputs = [
+                        F.interpolate(x, size=eval_size, mode='bilinear', align_corners=False)
+                        for x in inputs
+                    ]
+                else:
+                    model_inputs = F.interpolate(
+                        inputs, size=eval_size, mode='bilinear', align_corners=False
+                    )
+            else:
+                model_inputs = inputs
             with amp.autocast('cuda', enabled=amp_enabled, dtype=amp_dtype):
-                logits = model(inputs)
+                logits = model(model_inputs)
+            if logits.shape[-2:] != orig_size:
+                logits = F.interpolate(logits, size=orig_size, mode='bilinear', align_corners=False)
 
         elapsed = time.time() - start_time
         total_time += elapsed
@@ -376,10 +395,11 @@ def main():
         print(f"Mode: {eval_mode} (overridden via CLI)")
     else:
         print(f"Mode: {eval_mode} (from cfg['{args.split.upper()}']['MODE'])")
+    print(f"Legacy resize eval: {'enabled' if args.legacy_resize_eval else 'disabled'}")
 
     metrics, avg_time, fps = evaluate(
         model, dataloader, dataset, device, cfg, eval_mode=eval_mode,
-        config_key=args.split.upper(),
+        config_key=args.split.upper(), legacy_resize_eval=args.legacy_resize_eval,
         save_vis=args.save_vis, vis_dir=args.vis_dir
     )
 
