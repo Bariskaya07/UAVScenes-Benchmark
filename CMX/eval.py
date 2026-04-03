@@ -69,6 +69,56 @@ class SegEvaluator(Evaluator):
 
         return results_dict
 
+    def func_per_batch(self, batch_data, device):
+        if len(batch_data) == 1:
+            return [self.func_per_iteration(batch_data[0], device)]
+
+        sample_shapes = [(item['data'].shape, item['modal_x'].shape, item['label'].shape) for item in batch_data]
+        if any(shape != sample_shapes[0] for shape in sample_shapes[1:]):
+            logger.warning('Mixed image shapes in CMX eval batch; falling back to single-image inference.')
+            return [self.func_per_iteration(data, device) for data in batch_data]
+
+        imgs = [item['data'] for item in batch_data]
+        labels = [item['label'] for item in batch_data]
+        modal_xs = [item['modal_x'] for item in batch_data]
+        names = [item['fn'] for item in batch_data]
+
+        start = time.perf_counter()
+        preds = self.sliding_eval_rgbX_batch(imgs, modal_xs, config.eval_crop_size, config.eval_stride_rate, device)
+        elapsed = time.perf_counter() - start
+        elapsed_per_image = elapsed / max(1, len(batch_data))
+
+        results = []
+        for pred, label, name in zip(preds, labels, names):
+            hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
+            results_dict = {
+                'hist': hist_tmp,
+                'labeled': labeled_tmp,
+                'correct': correct_tmp,
+                'elapsed': elapsed_per_image,
+            }
+
+            if self.save_path is not None:
+                ensure_dir(self.save_path)
+                ensure_dir(self.save_path+'_color')
+
+                fn = name.replace('/', '_') + '.png'
+
+                cv2.imwrite(os.path.join(self.save_path, fn), pred)
+                saved_count = getattr(self, '_saved_image_count', 0) + 1
+                self._saved_image_count = saved_count
+                if saved_count % SAVE_LOG_INTERVAL == 0 or saved_count == self.ndata:
+                    logger.info(
+                        'Saved %d/%d predictions (latest: %s)',
+                        saved_count,
+                        self.ndata,
+                        fn,
+                    )
+
+            results.append(results_dict)
+
+        return results
+
     def compute_metric(self, results):
         hist = np.zeros((config.num_classes, config.num_classes))
         total_time = 0.0
@@ -134,6 +184,8 @@ if __name__ == "__main__":
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     parser.add_argument('--show_image', '-s', default=False,
                         action='store_true')
+    parser.add_argument('--batch-size', default=1, type=int, help='Eval batch size for batched sliding-window inference')
+    parser.add_argument('--save-preds', default=False, action='store_true', help='Save per-image prediction PNGs')
     parser.add_argument('--save_path', '-p', default=os.path.join(config.root_dir, 'results2'))
 
     args = parser.parse_args()
@@ -141,6 +193,7 @@ if __name__ == "__main__":
     amp_dtype_name = str(getattr(config, 'amp_dtype', 'bf16')).lower()
     amp_dtype = torch.bfloat16 if amp_dtype_name == 'bf16' else torch.float16
     logger.info('AMP: enabled (dtype=%s)', amp_dtype_name)
+    logger.info('Eval batch size: %d', args.batch_size)
 
     network = segmodel(cfg=config, criterion=None, norm_layer=nn.BatchNorm2d)
     data_setting = {
@@ -151,13 +204,19 @@ if __name__ == "__main__":
     ensure_dir(args.save_path)
     results_log_file = os.path.join(args.save_path, 'cmx_results.txt')
     results_log_link = os.path.join(args.save_path, 'cmx_results_last.txt')
+    pred_save_path = args.save_path if args.save_preds else None
+    if args.save_preds:
+        logger.info('Prediction saving: enabled')
+    else:
+        logger.info('Prediction saving: disabled (metrics/log only)')
 
     with torch.no_grad():
         segmentor = SegEvaluator(dataset, config.num_classes, config.norm_mean,
                                  config.norm_std, network,
                                  config.eval_scale_array, config.eval_flip,
-                                 all_dev, args.verbose, args.save_path,
+                                 all_dev, args.verbose, pred_save_path,
                                  args.show_image,
+                                 batch_size=args.batch_size,
                                  use_amp=torch.cuda.is_available(),
                                  amp_dtype=amp_dtype)
         segmentor.run(config.checkpoint_dir, args.epochs, results_log_file,
