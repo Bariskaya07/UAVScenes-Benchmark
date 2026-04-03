@@ -15,9 +15,12 @@ Features:
 import os
 import sys
 import argparse
+import io
+import json
 import yaml
 import time
 from pathlib import Path
+from contextlib import redirect_stdout
 
 import numpy as np
 import torch
@@ -43,6 +46,7 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=None, help='Override evaluation batch size')
     parser.add_argument('--save-vis', action='store_true', help='Save visualization')
     parser.add_argument('--vis-dir', type=str, default='output/vis', help='Visualization output dir')
+    parser.add_argument('--output-dir', type=str, default=None, help='Directory to save JSON/TXT evaluation summaries')
     return parser.parse_args()
 
 
@@ -51,6 +55,60 @@ def load_config(cfg_path):
     with open(cfg_path, 'r') as f:
         cfg = yaml.safe_load(f)
     return cfg
+
+
+def _to_serializable(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {k: _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_serializable(v) for v in value]
+    return value
+
+
+def save_results(metrics, output_dir, avg_time, fps, split, checkpoint_path, num_images):
+    """Save evaluation summary as JSON and human-readable TXT."""
+    results_dir = Path(output_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    results = metrics.get_results()
+    payload = _to_serializable(results)
+    payload.update({
+        'split': split,
+        'checkpoint': checkpoint_path,
+        'num_images': int(num_images),
+        'avg_time_ms': float(avg_time * 1000.0),
+        'fps': float(fps),
+        'class_names': UAVScenesMetrics.CLASS_NAMES,
+    })
+
+    json_path = results_dir / 'CMNeXt_results.json'
+    txt_path = results_dir / 'CMNeXt_results.txt'
+
+    with open(json_path, 'w') as f:
+        json.dump(payload, f, indent=2)
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        metrics.print_results()
+    metrics_text = buffer.getvalue().strip()
+
+    with open(txt_path, 'w') as f:
+        f.write("CMNeXt UAVScenes Evaluation Results\n")
+        f.write("=" * 100 + "\n")
+        f.write(f"Split: {split}\n")
+        f.write(f"Checkpoint: {checkpoint_path}\n")
+        f.write(f"Images: {num_images}\n\n")
+        f.write(metrics_text + "\n\n")
+        f.write("Inference speed:\n")
+        f.write(f"  Average time per image: {avg_time * 1000.0:.1f}ms\n")
+        f.write(f"  FPS: {fps:.2f}\n")
+
+    print(f"\nSaved results to: {json_path}")
+    print(f"Saved summary to: {txt_path}")
 
 
 def create_dataloader(cfg, split='test', batch_size_override=None):
@@ -295,6 +353,17 @@ def main():
     print(f"\nInference speed:")
     print(f"  Average time per image: {avg_time*1000:.1f}ms")
     print(f"  FPS: {fps:.2f}")
+
+    if args.output_dir:
+        save_results(
+            metrics,
+            args.output_dir,
+            avg_time,
+            fps,
+            args.split,
+            checkpoint_path,
+            len(dataset),
+        )
 
     if args.save_vis:
         print(f"\nVisualizations saved to: {args.vis_dir}")
