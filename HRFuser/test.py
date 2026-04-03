@@ -209,6 +209,7 @@ def main():
     conf_mat = np.zeros((num_classes, num_classes), dtype=np.int64)
     all_times = 0
     processed_images = 0
+    next_progress = 100
 
     with torch.no_grad():
         for i, sample in enumerate(loader):
@@ -259,8 +260,10 @@ def main():
                     cv2.imwrite(pred_path, pred)
 
             processed_images += batch_size
-            if processed_images % 100 == 0 or processed_images == len(dataset):
+            if processed_images >= next_progress or processed_images == len(dataset):
                 print(f"Processed {processed_images}/{len(dataset)} images")
+                while next_progress <= processed_images:
+                    next_progress += 100
 
     if conf_mat.sum() == 0:
         raise RuntimeError("Confusion matrix is empty. Check labels/predictions in test set.")

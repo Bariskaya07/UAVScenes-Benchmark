@@ -26,7 +26,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast
+from torch import amp
 import cv2
 
 # Add project root to path
@@ -268,6 +268,7 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
 
     total_time = 0
     num_samples = 0
+    next_progress = 100
 
     for batch_idx, (inputs, target) in enumerate(dataloader):
         if isinstance(inputs, (list, tuple)):
@@ -281,7 +282,7 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
         if eval_mode == 'slide':
             logits = sliding_window_inference(model, inputs, cfg)
         else:
-            with autocast():
+            with amp.autocast(device_type='cuda', enabled=(device.type == 'cuda')):
                 logits = model(inputs)
 
         elapsed = time.time() - start_time
@@ -299,8 +300,10 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
                 save_visualization(rgb, pred[i], target[i], save_path, dataset)
 
         # Progress
-        if num_samples % 100 == 0 or num_samples == len(dataset):
+        if num_samples >= next_progress or num_samples == len(dataset):
             print(f"Processed {num_samples}/{len(dataset)} images...")
+            while next_progress <= num_samples:
+                next_progress += 100
 
     avg_time = total_time / num_samples
     fps = 1.0 / avg_time
