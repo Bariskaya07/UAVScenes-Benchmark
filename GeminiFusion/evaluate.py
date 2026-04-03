@@ -108,6 +108,21 @@ def get_arguments():
         help="Which output branch to evaluate",
     )
     parser.add_argument(
+        "--eval-mode",
+        type=str,
+        default="slide",
+        choices=["slide", "whole"],
+        help="Evaluation mode: sliding-window (default) or whole-image forward",
+    )
+    parser.add_argument(
+        "--legacy-resize-eval",
+        action="store_true",
+        help=(
+            "Resize inputs to window-size before evaluation to mimic the older "
+            "fast validation-style protocol."
+        ),
+    )
+    parser.add_argument(
         "--hag-max-height",
         type=float,
         default=50.0,
@@ -230,6 +245,32 @@ def sliding_window_inference(
     return prediction
 
 
+def whole_image_inference(
+    model, rgb, hag, num_classes=19, amp_enabled=True,
+    amp_dtype=torch.bfloat16, branch="ensemble"
+):
+    """Perform whole-image inference and return class predictions."""
+    with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
+        outputs, _ = model([rgb, hag])
+
+    if branch == "rgb":
+        pred = outputs[0]
+    elif branch == "depth":
+        pred = outputs[1]
+    else:
+        pred = outputs[-1]
+
+    if pred.shape[2:] != rgb.shape[2:]:
+        pred = F.interpolate(
+            pred,
+            size=rgb.shape[2:],
+            mode="bilinear",
+            align_corners=False,
+        )
+
+    return pred.argmax(dim=1).cpu().numpy().astype(np.uint8)
+
+
 def evaluate(args):
     """Run evaluation."""
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -284,11 +325,12 @@ def evaluate(args):
     model.to(device)
     model.eval()
 
-    # Create validation transforms (no augmentation)
-    val_transform = transforms.Compose([
-        ToTensor(),
-        Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-    ])
+    # Create evaluation transforms
+    eval_transforms = [ToTensor()]
+    if args.legacy_resize_eval:
+        eval_transforms.append(Resize([args.window_size, args.window_size]))
+    eval_transforms.append(Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)))
+    val_transform = transforms.Compose(eval_transforms)
 
     # Create dataset
     dataset = UAVScenesDataset(
@@ -321,7 +363,10 @@ def evaluate(args):
         print(f"Evaluating on {len(dataset)} samples...")
         print(f"Split: {args.split}")
         print(f"Branch: {args.branch}")
-        print(f"Sliding window: {args.window_size}x{args.window_size}, stride={args.stride}")
+        print(f"Eval mode: {args.eval_mode}")
+        print(f"Legacy resize: {'enabled' if args.legacy_resize_eval else 'disabled'}")
+        if args.eval_mode == "slide":
+            print(f"Sliding window: {args.window_size}x{args.window_size}, stride={args.stride}")
         if amp_enabled:
             print(f"AMP: enabled ({args.amp_dtype})")
         else:
@@ -355,15 +400,24 @@ def evaluate(args):
                 torch.cuda.synchronize(device)
             start_time = time.time()
 
-            pred = sliding_window_inference(
-                model, rgb, hag,
-                window_size=args.window_size,
-                stride=args.stride,
-                num_classes=args.num_classes,
-                amp_enabled=amp_enabled,
-                amp_dtype=amp_dtype,
-                branch=args.branch,
-            )
+            if args.eval_mode == "slide":
+                pred = sliding_window_inference(
+                    model, rgb, hag,
+                    window_size=args.window_size,
+                    stride=args.stride,
+                    num_classes=args.num_classes,
+                    amp_enabled=amp_enabled,
+                    amp_dtype=amp_dtype,
+                    branch=args.branch,
+                )
+            else:
+                pred = whole_image_inference(
+                    model, rgb, hag,
+                    num_classes=args.num_classes,
+                    amp_enabled=amp_enabled,
+                    amp_dtype=amp_dtype,
+                    branch=args.branch,
+                )
 
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
@@ -521,6 +575,8 @@ def evaluate(args):
         "dataset": "UAVScenes",
         "split": args.split,
         "branch": args.branch,
+        "eval_mode": args.eval_mode,
+        "legacy_resize_eval": bool(args.legacy_resize_eval),
         "num_images": num_images,
         "sliding_window": {
             "window_size": args.window_size,
@@ -561,6 +617,13 @@ def evaluate(args):
     }
 
     result_stem = f"GeminiFusion_{args.split}_{args.branch}"
+    suffix_parts = []
+    if args.eval_mode != "slide":
+        suffix_parts.append(args.eval_mode)
+    if args.legacy_resize_eval:
+        suffix_parts.append("legacyresize")
+    if suffix_parts:
+        result_stem += "_" + "_".join(suffix_parts)
     json_path = os.path.join(results_dir, f"{result_stem}_results.json")
     with open(json_path, "w") as f:
         json.dump(json_results, f, indent=2)
@@ -573,6 +636,8 @@ def evaluate(args):
         f.write(f"Timestamp: {timestamp}\n")
         f.write(f"Checkpoint: {args.resume}\n")
         f.write(f"Branch: {args.branch}\n")
+        f.write(f"Eval mode: {args.eval_mode}\n")
+        f.write(f"Legacy resize: {args.legacy_resize_eval}\n")
         f.write(f"GPU: {gpu_name}\n")
         f.write("=" * 100 + "\n\n")
 
@@ -592,7 +657,9 @@ def evaluate(args):
         f.write(f"Avg time/image:  {avg_time_ms:.1f} ms\n")
         f.write(f"FPS:             {fps:.2f}\n")
         f.write(f"Total images:    {num_images}\n")
-        f.write(f"Window/Stride:   {args.window_size}/{args.stride}\n\n")
+        if args.eval_mode == "slide":
+            f.write(f"Window/Stride:   {args.window_size}/{args.stride}\n")
+        f.write(f"Legacy resize:   {args.legacy_resize_eval}\n\n")
 
         f.write("PER-CLASS RESULTS\n")
         f.write("=" * 100 + "\n")
