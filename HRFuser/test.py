@@ -71,6 +71,15 @@ def get_arguments():
     parser.add_argument("--save-dir", type=str, default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "results2"))
     parser.add_argument("--flip-test", action="store_true", default=False,
                         help="Enable horizontal flip test-time augmentation")
+    parser.add_argument(
+        "--legacy-resize-eval",
+        action="store_true",
+        default=False,
+        help=(
+            "Reproduce the pre-benchmark test protocol: resize the shorter edge "
+            "to slide_size (then align to /32) before sliding-window inference."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -206,20 +215,22 @@ def main():
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params / 1e6:.2f}M")
     print(f"AMP: {amp_enabled} (dtype={amp_dtype_name})")
+    protocol_name = "legacy-resize + sliding window" if args.legacy_resize_eval else "native-size sliding window"
     print(
-        f"Test protocol: native-size sliding window "
+        f"Test protocol: {protocol_name} "
         f"(crop={cfg.evaluation.slide_size}, stride={cfg.evaluation.slide_stride})"
     )
 
     # Create dataset
     from torchvision import transforms
     from utils.transforms import ToTensor
-    from utils.augmentations_mm import Normalize
+    from utils.augmentations_mm import Normalize, Resize
 
-    composed_test = transforms.Compose([
-        ToTensor(),
-        Normalize(cfg.normalization.rgb_mean, cfg.normalization.rgb_std),
-    ])
+    test_transforms = [ToTensor()]
+    if args.legacy_resize_eval:
+        test_transforms.append(Resize([cfg.evaluation.slide_size, cfg.evaluation.slide_size]))
+    test_transforms.append(Normalize(cfg.normalization.rgb_mean, cfg.normalization.rgb_std))
+    composed_test = transforms.Compose(test_transforms)
 
     dataset = UAVScenesDataset(
         data_root=cfg.dataset.data_path, split=args.split,
@@ -391,6 +402,7 @@ def main():
         f.write(f"HRFuser-T UAVScenes Test Results ({args.split} split)\n")
         f.write(f"Checkpoint: {args.ckpt_path}\n")
         f.write(f"Config: {args.config}\n")
+        f.write(f"Protocol: {protocol_name}\n")
         f.write(f"Total images: {len(dataset)}\n")
         f.write(f"Total time: {all_times:.1f}s\n\n")
 
