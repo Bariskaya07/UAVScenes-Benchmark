@@ -46,6 +46,12 @@ def parse_args():
                         help='Path to model checkpoint')
     parser.add_argument('--config', type=str, default='configs/uavscenes_rgb_hag.yaml',
                         help='Path to config file')
+    parser.add_argument('--split', type=str, default='test', choices=['val', 'test'],
+                        help='Dataset split to evaluate')
+    parser.add_argument('--eval-mode', type=str, default='slide', choices=['slide', 'whole'],
+                        help='Inference mode: slide for native benchmark, whole for fast full-image eval')
+    parser.add_argument('--legacy-resize-eval', action='store_true',
+                        help='Use legacy resize-based transform before evaluation')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='Test batch size')
     parser.add_argument('--output', type=str, default=str(Path(__file__).resolve().parent / 'results2'),
@@ -86,28 +92,42 @@ def build_model(cfg, checkpoint_path, device):
     return model
 
 
-def build_dataloader(cfg, batch_size_override=None):
+def build_dataloader(cfg, split='test', batch_size_override=None, legacy_resize_eval=False, eval_mode='slide'):
     """Build test dataloader.
 
     Note:
         For fair comparison with CMNeXt, test evaluation should NOT resize
         inputs/labels before sliding-window inference.
     """
-    test_transform = TestTransform(
-        rgb_mean=cfg.normalization.rgb_mean,
-        rgb_std=cfg.normalization.rgb_std,
-        hag_mean=cfg.normalization.hag_mean,
-        hag_std=cfg.normalization.hag_std
-    )
+    if legacy_resize_eval:
+        transform = ValTransform(
+            rgb_mean=cfg.normalization.rgb_mean,
+            rgb_std=cfg.normalization.rgb_std,
+            hag_mean=cfg.normalization.hag_mean,
+            hag_std=cfg.normalization.hag_std,
+            size=cfg.training.image_size,
+        )
+    else:
+        transform = TestTransform(
+            rgb_mean=cfg.normalization.rgb_mean,
+            rgb_std=cfg.normalization.rgb_std,
+            hag_mean=cfg.normalization.hag_mean,
+            hag_std=cfg.normalization.hag_std
+        )
 
     test_dataset = UAVScenesDataset(
         data_root=cfg.dataset.data_path,
-        split='test',
-        transform=test_transform,
+        split=split,
+        transform=transform,
         hag_max_height=cfg.hag.max_meters
     )
 
-    batch_size = batch_size_override if batch_size_override is not None else 1
+    if batch_size_override is not None:
+        batch_size = batch_size_override
+    elif eval_mode == 'whole' and legacy_resize_eval:
+        batch_size = getattr(cfg.evaluation, 'val_batch_size', 1)
+    else:
+        batch_size = 1
 
     val_loader = DataLoader(
         test_dataset,
@@ -120,8 +140,20 @@ def build_dataloader(cfg, batch_size_override=None):
     return val_loader
 
 
+def build_result_name(split, eval_mode, legacy_resize_eval):
+    """Return result prefix without overwriting the default benchmark outputs."""
+    if split == 'test' and eval_mode == 'slide' and not legacy_resize_eval:
+        return 'TokenFusion'
+
+    suffixes = [split, eval_mode]
+    if legacy_resize_eval:
+        suffixes.append('legacyresize')
+    return 'TokenFusion_' + '_'.join(suffixes)
+
+
 @torch.no_grad()
-def evaluate(model, val_loader, cfg, device, save_pred=False, output_dir=None):
+def evaluate(model, val_loader, cfg, device, eval_mode='slide', save_pred=False, output_dir=None,
+             split='test', legacy_resize_eval=False):
     """
     Evaluate model with sliding window inference.
 
@@ -141,9 +173,13 @@ def evaluate(model, val_loader, cfg, device, save_pred=False, output_dir=None):
     )
 
     print("\nRunning evaluation with sliding window inference...")
-    print(f"  Window size: {cfg.evaluation.slide_size}")
-    print(f"  Stride: {cfg.evaluation.slide_stride}")
-    print(f"  Test samples: {len(val_loader.dataset)}")
+    print(f"  Split: {split}")
+    print(f"  Eval mode: {eval_mode}")
+    print(f"  Legacy resize eval: {'enabled' if legacy_resize_eval else 'disabled'}")
+    if eval_mode == 'slide':
+        print(f"  Window size: {cfg.evaluation.slide_size}")
+        print(f"  Stride: {cfg.evaluation.slide_stride}")
+    print(f"  Samples: {len(val_loader.dataset)}")
 
     start_time = time.time()
 
@@ -152,14 +188,19 @@ def evaluate(model, val_loader, cfg, device, save_pred=False, output_dir=None):
         hag = sample['hag'].to(device)
         label = sample['label']
 
-        # Sliding window inference
-        output = sliding_window_inference(
-            model, rgb, hag,
-            window_size=cfg.evaluation.slide_size,
-            stride=cfg.evaluation.slide_stride,
-            num_classes=cfg.dataset.num_classes,
-            device=device
-        )
+        if eval_mode == 'slide':
+            output = sliding_window_inference(
+                model, rgb, hag,
+                window_size=cfg.evaluation.slide_size,
+                stride=cfg.evaluation.slide_stride,
+                num_classes=cfg.dataset.num_classes,
+                device=device
+            )
+        else:
+            outputs, _ = model([rgb, hag])
+            output = outputs[-1]
+            label_size = label.shape[1:]
+            output = F.interpolate(output, size=label_size, mode='bilinear', align_corners=False)
 
         # Get predictions
         pred = output.argmax(dim=1).cpu()
@@ -181,7 +222,14 @@ def evaluate(model, val_loader, cfg, device, save_pred=False, output_dir=None):
     print("Inference speed:")
     print(f"  Average time per image: {avg_time_ms:.1f}ms")
     print(f"  FPS: {fps:.2f}")
-    metrics_obj.save_results(output_dir or str(Path(__file__).resolve().parent / 'results2'), 'TokenFusion', avg_time_ms, fps, len(val_loader.dataset))
+    result_name = build_result_name(split, eval_mode, legacy_resize_eval)
+    metrics_obj.save_results(
+        output_dir or str(Path(__file__).resolve().parent / 'results2'),
+        result_name,
+        avg_time_ms,
+        fps,
+        len(val_loader.dataset),
+    )
 
     return metrics_obj.get_results()
 
@@ -255,13 +303,22 @@ def main():
     print(f"Classes: {cfg.dataset.num_classes}")
 
     # Build dataloader
-    val_loader = build_dataloader(cfg, batch_size_override=args.batch_size)
+    val_loader = build_dataloader(
+        cfg,
+        split=args.split,
+        batch_size_override=args.batch_size,
+        legacy_resize_eval=args.legacy_resize_eval,
+        eval_mode=args.eval_mode,
+    )
 
     # Evaluate
     evaluate(
         model, val_loader, cfg, device,
+        eval_mode=args.eval_mode,
         save_pred=args.save_pred,
-        output_dir=args.output
+        output_dir=args.output,
+        split=args.split,
+        legacy_resize_eval=args.legacy_resize_eval,
     )
 
 

@@ -44,6 +44,8 @@ def parse_args():
     parser.add_argument('--cfg', type=str, required=True, help='Config file path')
     parser.add_argument('--checkpoint', type=str, default=None, help='Checkpoint path')
     parser.add_argument('--split', type=str, default='test', choices=['val', 'test'], help='Dataset split to evaluate')
+    parser.add_argument('--eval-mode', type=str, default=None, choices=['whole', 'slide'],
+                        help='Override evaluation mode from config')
     parser.add_argument('--batch-size', type=int, default=None, help='Override evaluation batch size')
     parser.add_argument('--save-vis', action='store_true', help='Save visualization')
     parser.add_argument('--vis-dir', type=str, default='output/vis', help='Visualization output dir')
@@ -361,14 +363,19 @@ def main():
     model = create_model(cfg, checkpoint_path, device)
 
     # Determine eval mode based on split
-    if args.split == 'test':
+    if args.eval_mode is not None:
+        eval_mode = args.eval_mode
+    elif args.split == 'test':
         eval_mode = cfg.get('TEST', {}).get('MODE', 'slide')
     else:
         eval_mode = cfg.get('EVAL', {}).get('MODE', 'whole')
 
     # Evaluate
     print("\nEvaluating...")
-    print(f"Mode: {eval_mode} (from cfg['{args.split.upper()}']['MODE'])")
+    if args.eval_mode is not None:
+        print(f"Mode: {eval_mode} (overridden via CLI)")
+    else:
+        print(f"Mode: {eval_mode} (from cfg['{args.split.upper()}']['MODE'])")
 
     metrics, avg_time, fps = evaluate(
         model, dataloader, dataset, device, cfg, eval_mode=eval_mode,
