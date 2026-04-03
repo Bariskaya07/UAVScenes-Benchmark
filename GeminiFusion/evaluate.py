@@ -29,6 +29,17 @@ from utils.transforms import ToTensor
 from utils.augmentations_mm import Normalize, Resize
 from utils.meter import confusion_matrix, getScores
 
+try:
+    from torch.amp import autocast as _amp_autocast
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast("cuda", enabled=enabled, dtype=dtype)
+except Exception:  # pragma: no cover - older torch fallback
+    from torch.cuda.amp import autocast as _amp_autocast
+
+    def amp_autocast(*, enabled, dtype):
+        return _amp_autocast(enabled=enabled, dtype=dtype)
+
 
 def get_arguments():
     """Parse command line arguments."""
@@ -105,12 +116,29 @@ def get_arguments():
         default=19,
         help="Number of classes",
     )
+    parser.add_argument(
+        "--amp-dtype",
+        type=str,
+        default="bf16",
+        choices=["bf16", "fp16"],
+        help="AMP autocast dtype for CUDA evaluation",
+    )
 
     return parser.parse_args()
 
 
+def resolve_amp_dtype(dtype_name: str):
+    dtype_name = str(dtype_name).lower()
+    if dtype_name == "bf16":
+        return torch.bfloat16
+    if dtype_name == "fp16":
+        return torch.float16
+    raise ValueError(f"Unsupported --amp-dtype '{dtype_name}'. Expected 'bf16' or 'fp16'.")
+
+
 def sliding_window_inference(
-    model, rgb, hag, window_size=768, stride=512, num_classes=19
+    model, rgb, hag, window_size=768, stride=512, num_classes=19,
+    amp_enabled=True, amp_dtype=torch.bfloat16
 ):
     """
     Perform sliding window inference for large images.
@@ -133,73 +161,49 @@ def sliding_window_inference(
     pred_map = torch.zeros((B, num_classes, H, W), device=device)
     count_map = torch.zeros((B, 1, H, W), device=device)
 
-    # Calculate padding if needed
-    pad_h = (window_size - H % window_size) % window_size if H < window_size else 0
-    pad_w = (window_size - W % window_size) % window_size if W < window_size else 0
+    h_start = 0
+    while h_start < H:
+        h_end = min(h_start + window_size, H)
+        if h_end - h_start < window_size and h_start > 0:
+            h_start = H - window_size
+            h_end = H
 
-    if H < window_size or W < window_size:
-        # Pad image if smaller than window
-        rgb = F.pad(rgb, (0, pad_w, 0, pad_h), mode='reflect')
-        hag = F.pad(hag, (0, pad_w, 0, pad_h), mode='reflect')
-        padded_H, padded_W = rgb.shape[2], rgb.shape[3]
-        pred_map = torch.zeros((B, num_classes, padded_H, padded_W), device=device)
-        count_map = torch.zeros((B, 1, padded_H, padded_W), device=device)
-    else:
-        padded_H, padded_W = H, W
+        w_start = 0
+        while w_start < W:
+            w_end = min(w_start + window_size, W)
+            if w_end - w_start < window_size and w_start > 0:
+                w_start = W - window_size
+                w_end = W
 
-    # Sliding window
-    for y in range(0, padded_H - window_size + 1, stride):
-        for x in range(0, padded_W - window_size + 1, stride):
-            # Extract window
-            rgb_crop = rgb[:, :, y:y+window_size, x:x+window_size]
-            hag_crop = hag[:, :, y:y+window_size, x:x+window_size]
+            rgb_crop = rgb[:, :, h_start:h_end, w_start:w_end]
+            hag_crop = hag[:, :, h_start:h_end, w_start:w_end]
 
-            # Forward pass
-            outputs, _ = model([rgb_crop, hag_crop])
-            pred = outputs[-1]  # Ensemble output
+            with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
+                outputs, _ = model([rgb_crop, hag_crop])
+            pred = outputs[-1]
 
-            # Upsample to window size if needed
-            if pred.shape[2] != window_size or pred.shape[3] != window_size:
+            if pred.shape[2:] != (h_end - h_start, w_end - w_start):
                 pred = F.interpolate(
-                    pred, size=(window_size, window_size),
-                    mode='bilinear', align_corners=False
+                    pred,
+                    size=(h_end - h_start, w_end - w_start),
+                    mode='bilinear',
+                    align_corners=False
                 )
 
-            # Accumulate predictions
-            pred_map[:, :, y:y+window_size, x:x+window_size] += pred
-            count_map[:, :, y:y+window_size, x:x+window_size] += 1
+            pred_map[:, :, h_start:h_end, w_start:w_end] += pred
+            count_map[:, :, h_start:h_end, w_start:w_end] += 1
 
-    # Handle last column and row if not covered
-    if (padded_W - window_size) % stride != 0:
-        x = padded_W - window_size
-        for y in range(0, padded_H - window_size + 1, stride):
-            rgb_crop = rgb[:, :, y:y+window_size, x:x+window_size]
-            hag_crop = hag[:, :, y:y+window_size, x:x+window_size]
-            outputs, _ = model([rgb_crop, hag_crop])
-            pred = outputs[-1]
-            if pred.shape[2] != window_size:
-                pred = F.interpolate(pred, size=(window_size, window_size), mode='bilinear', align_corners=False)
-            pred_map[:, :, y:y+window_size, x:x+window_size] += pred
-            count_map[:, :, y:y+window_size, x:x+window_size] += 1
+            if w_end == W:
+                break
+            w_start += stride
 
-    if (padded_H - window_size) % stride != 0:
-        y = padded_H - window_size
-        for x in range(0, padded_W - window_size + 1, stride):
-            rgb_crop = rgb[:, :, y:y+window_size, x:x+window_size]
-            hag_crop = hag[:, :, y:y+window_size, x:x+window_size]
-            outputs, _ = model([rgb_crop, hag_crop])
-            pred = outputs[-1]
-            if pred.shape[2] != window_size:
-                pred = F.interpolate(pred, size=(window_size, window_size), mode='bilinear', align_corners=False)
-            pred_map[:, :, y:y+window_size, x:x+window_size] += pred
-            count_map[:, :, y:y+window_size, x:x+window_size] += 1
+        if h_end == H:
+            break
+        h_start += stride
 
     # Average predictions
     count_map = torch.clamp(count_map, min=1)
     pred_map = pred_map / torch.clamp(count_map, min=1)
-
-    # Remove padding
-    pred_map = pred_map[:, :H, :W]
 
     # Get class predictions
     prediction = pred_map.argmax(dim=1).cpu().numpy().astype(np.uint8)
@@ -222,6 +226,9 @@ def evaluate(args):
         device = torch.device("cuda", local_rank)
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    amp_enabled = device.type == "cuda"
+    amp_dtype = resolve_amp_dtype(args.amp_dtype)
 
     # Determine output directory
     if args.output_dir:
@@ -294,6 +301,10 @@ def evaluate(args):
     if rank == 0:
         print(f"Evaluating on {len(dataset)} samples...")
         print(f"Sliding window: {args.window_size}x{args.window_size}, stride={args.stride}")
+        if amp_enabled:
+            print(f"AMP: enabled ({args.amp_dtype})")
+        else:
+            print("AMP: disabled (CPU)")
         print(f"Results will be saved to: {results_dir}")
 
     # Initialize confusion matrix
@@ -328,6 +339,8 @@ def evaluate(args):
                 window_size=args.window_size,
                 stride=args.stride,
                 num_classes=args.num_classes,
+                amp_enabled=amp_enabled,
+                amp_dtype=amp_dtype,
             )
 
             if device.type == "cuda":
