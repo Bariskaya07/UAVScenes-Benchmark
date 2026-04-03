@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from models.hrfuser_segformer import HRFuserSegFormer
 from datasets.uavscenes import UAVScenesDataset, CLASS_NAMES
@@ -210,6 +211,7 @@ def main():
     all_times = 0
     processed_images = 0
     next_progress = 100
+    progress_bar = tqdm(total=len(dataset), desc="Testing", unit="img", leave=True)
 
     with torch.no_grad():
         for i, sample in enumerate(loader):
@@ -238,6 +240,8 @@ def main():
             all_times += end_time - start_time
 
             batch_size = target.shape[0]
+            progress_bar.update(batch_size)
+            progress_bar.set_postfix(lat=f"{(end_time - start_time)/batch_size:.3f}s/img")
             for b in range(batch_size):
                 gt = target[b].data.cpu().numpy().astype(np.uint8)
                 gt_idx = gt < num_classes
@@ -264,6 +268,8 @@ def main():
                 print(f"Processed {processed_images}/{len(dataset)} images")
                 while next_progress <= processed_images:
                     next_progress += 100
+
+    progress_bar.close()
 
     if conf_mat.sum() == 0:
         raise RuntimeError("Confusion matrix is empty. Check labels/predictions in test set.")

@@ -28,6 +28,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch import amp
 import cv2
+from tqdm import tqdm
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -269,6 +270,7 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
     total_time = 0
     num_samples = 0
     next_progress = 100
+    progress_bar = tqdm(total=len(dataset), desc="Evaluating", unit="img", leave=True)
 
     for batch_idx, (inputs, target) in enumerate(dataloader):
         if isinstance(inputs, (list, tuple)):
@@ -288,6 +290,8 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
         elapsed = time.time() - start_time
         total_time += elapsed
         num_samples += target.shape[0]
+        progress_bar.update(target.shape[0])
+        progress_bar.set_postfix(lat=f"{elapsed/target.shape[0]:.3f}s/img")
 
         pred = logits.argmax(dim=1)
         metrics.update_batch(pred, target)
@@ -304,6 +308,8 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
             print(f"Processed {num_samples}/{len(dataset)} images...")
             while next_progress <= num_samples:
                 next_progress += 100
+
+    progress_bar.close()
 
     avg_time = total_time / num_samples
     fps = 1.0 / avg_time
