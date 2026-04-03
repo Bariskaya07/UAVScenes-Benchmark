@@ -43,7 +43,7 @@ class SegEvaluator(Evaluator):
             ensure_dir(self.save_path)
             ensure_dir(self.save_path + '_color')
             fn = name.replace('/', '_') + '.png'
-            cv2.imwrite(os.path.join(self.save_path, fn), pred)
+            cv2.imwrite(os.path.join(self.save_path, fn), pred.astype(np.uint8))
             saved_count = getattr(self, '_saved_image_count', 0) + 1
             self._saved_image_count = saved_count
             if saved_count % SAVE_LOG_INTERVAL == 0 or saved_count == self.ndata:
@@ -107,6 +107,7 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     parser.add_argument('--show_image', '-s', default=False, action='store_true')
     parser.add_argument('--save_path', '-p', default=os.path.join(config.root_dir, 'results2'))
+    parser.add_argument('--save-preds', default=False, action='store_true', help='Save per-image prediction PNGs')
     args = parser.parse_args()
 
     all_dev = parse_devices(args.devices)
@@ -120,6 +121,11 @@ if __name__ == '__main__':
     ensure_dir(args.save_path)
     results_log_file = os.path.join(args.save_path, 'stitchfusion_results.txt')
     results_log_link = os.path.join(args.save_path, 'stitchfusion_results_last.txt')
+    pred_save_path = args.save_path if args.save_preds else None
+    if args.save_preds:
+        logger.info('Prediction saving: enabled')
+    else:
+        logger.info('Prediction saving: disabled (metrics/log only)')
 
     with torch.no_grad():
         segmentor = SegEvaluator(
@@ -132,7 +138,7 @@ if __name__ == '__main__':
             config.eval_flip,
             all_dev,
             args.verbose,
-            args.save_path,
+            pred_save_path,
             args.show_image,
             use_amp=torch.cuda.is_available(),
             amp_dtype=amp_dtype,
