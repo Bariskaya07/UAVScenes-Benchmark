@@ -75,6 +75,22 @@ def load_torch_checkpoint(path, map_location):
         return torch.load(path, map_location=map_location)
 
 
+def top_confused_pairs(conf_mat, class_names, top_k=5):
+    """Return top confused class pairs as (true_name, pred_name, count)."""
+    cm_copy = conf_mat.copy()
+    np.fill_diagonal(cm_copy, 0)
+    flat_indices = np.argsort(cm_copy.ravel())[::-1][:top_k]
+    pairs = []
+    num_classes = cm_copy.shape[0]
+    for idx in flat_indices:
+        true_cls = idx // num_classes
+        pred_cls = idx % num_classes
+        count = int(cm_copy[true_cls, pred_cls])
+        if count > 0:
+            pairs.append((class_names[true_cls], class_names[pred_cls], count))
+    return pairs
+
+
 # ---------------------------------------------------------------------------
 # Sliding window inference
 # ---------------------------------------------------------------------------
@@ -318,6 +334,12 @@ def main():
     print(f"  {'Mean Recall':<18} {mean_recall:>7.2f}%")
     print(f"  {'Mean F1':<18} {mean_f1:>7.2f}%")
     print("=" * 100)
+    print("\nMost Confused Class Pairs (Top 5):")
+    print("-" * 60)
+    confused_pairs = top_confused_pairs(conf_mat, CLASS_NAMES[:num_classes])
+    for true_name, pred_name, count in confused_pairs:
+        print(f"  {true_name:<18} -> {pred_name:<18}: {count:>12,} pixels")
+    print("=" * 100)
     print("\nInference speed:")
     print(f"  Average time per image: {latency * 1000:.1f}ms")
     print(f"  FPS: {fps:.2f}")
@@ -357,6 +379,11 @@ def main():
         f.write(f"  {'Mean Precision':<18} {mean_precision:>7.2f}%\n")
         f.write(f"  {'Mean Recall':<18} {mean_recall:>7.2f}%\n")
         f.write(f"  {'Mean F1':<18} {mean_f1:>7.2f}%\n")
+        f.write("=" * 100 + "\n\n")
+        f.write("Most Confused Class Pairs (Top 5):\n")
+        f.write("-" * 60 + "\n")
+        for true_name, pred_name, count in confused_pairs:
+            f.write(f"  {true_name:<18} -> {pred_name:<18}: {count:>12,} pixels\n")
         f.write("=" * 100 + "\n\n")
         f.write("Inference speed:\n")
         f.write(f"  Average time per image: {latency * 1000:.1f}ms\n")
