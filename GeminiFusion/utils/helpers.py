@@ -47,11 +47,21 @@ def make_validation_img(img_, depth_, lab, pre):
     img = img.astype(np.uint8)
     img = np.concatenate(img, axis=1)
 
-    depth_ = depth_[0].transpose(1, 2, 0) / max(depth_.max(), 10)
-    vmax = np.percentile(depth_, 95)
-    normalizer = mpl.colors.Normalize(vmin=depth_.min(), vmax=vmax)
+    # HAG may be provided as 1 channel or repeated across 3 channels.
+    depth_ = depth_[0].transpose(1, 2, 0)
+    if depth_.ndim == 3 and depth_.shape[2] > 1:
+        depth_ = depth_[:, :, 0]
+    else:
+        depth_ = np.squeeze(depth_)
+    depth_ = depth_.astype(np.float32)
+    depth_ = depth_ / max(float(depth_.max()), 10.0)
+    vmax = float(np.percentile(depth_, 95))
+    vmin = float(depth_.min())
+    if vmax <= vmin:
+        vmax = vmin + 1e-6
+    normalizer = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
     mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
-    depth = (mapper.to_rgba(depth_)[:,:,:3] * 255).astype(np.uint8)
+    depth = (mapper.to_rgba(depth_)[:, :, :3] * 255).astype(np.uint8)
     lab = np.concatenate(lab)
     lab = np.array([cmap[i.astype(np.uint8) + 1] for i in lab])
 
