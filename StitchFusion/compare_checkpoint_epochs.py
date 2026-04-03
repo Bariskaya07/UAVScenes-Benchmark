@@ -52,16 +52,39 @@ def parse_args():
     return parser.parse_args()
 
 
-def evaluate_checkpoint(model, dataset, device, batch_size):
-    model.eval()
-    hist = np.zeros((config.num_classes, config.num_classes), dtype=np.float64)
-    correct = 0
-    labeled = 0
+def summarize_metrics(hist, correct, labeled):
+    iou, mean_iou, _, freq_iou, mean_pixel_acc, pixel_acc = compute_score(hist, correct, labeled)
+    detailed = compute_detailed_score(hist)
+    return {
+        "hist": hist,
+        "iou": iou,
+        "mean_iou": mean_iou * 100.0,
+        "freq_iou": freq_iou * 100.0,
+        "mean_pixel_acc": mean_pixel_acc * 100.0,
+        "pixel_acc": pixel_acc * 100.0,
+        "static_miou": detailed["static_mIoU"] * 100.0,
+        "dynamic_miou": detailed["dynamic_mIoU"] * 100.0,
+    }
+
+
+def evaluate_checkpoints_one_pass(models_by_epoch, dataset, device, batch_size):
+    for model in models_by_epoch.values():
+        model.eval()
+
+    state_by_epoch = {
+        epoch: {
+            "hist": np.zeros((config.num_classes, config.num_classes), dtype=np.float64),
+            "correct": 0,
+            "labeled": 0,
+        }
+        for epoch in models_by_epoch
+    }
+
     mean = config.norm_mean.reshape(1, 1, 3).astype(np.float32)
     std = config.norm_std.reshape(1, 1, 3).astype(np.float32)
 
-    with torch.no_grad():
-        for batch_start in tqdm(range(0, len(dataset), batch_size), desc="Evaluating", leave=False):
+    with torch.inference_mode():
+        for batch_start in tqdm(range(0, len(dataset), batch_size), desc="Evaluating checkpoints", leave=False):
             batch_end = min(batch_start + batch_size, len(dataset))
             batch_rgb = []
             batch_modal = []
@@ -77,25 +100,18 @@ def evaluate_checkpoint(model, dataset, device, batch_size):
 
             rgb_t = torch.from_numpy(np.stack(batch_rgb)).float().to(device)
             modal_t = torch.from_numpy(np.stack(batch_modal)).float().to(device)
-            preds = model(rgb_t, modal_t).argmax(dim=1).cpu().numpy()
+            for epoch, model in models_by_epoch.items():
+                preds = model(rgb_t, modal_t).argmax(dim=1).cpu().numpy()
+                state = state_by_epoch[epoch]
+                for pred, label in zip(preds, batch_labels):
+                    hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
+                    state["hist"] += hist_tmp
+                    state["correct"] += correct_tmp
+                    state["labeled"] += labeled_tmp
 
-            for pred, label in zip(preds, batch_labels):
-                hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
-                hist += hist_tmp
-                correct += correct_tmp
-                labeled += labeled_tmp
-
-    iou, mean_iou, _, freq_iou, mean_pixel_acc, pixel_acc = compute_score(hist, correct, labeled)
-    detailed = compute_detailed_score(hist)
     return {
-        "hist": hist,
-        "iou": iou,
-        "mean_iou": mean_iou * 100.0,
-        "freq_iou": freq_iou * 100.0,
-        "mean_pixel_acc": mean_pixel_acc * 100.0,
-        "pixel_acc": pixel_acc * 100.0,
-        "static_miou": detailed["static_mIoU"] * 100.0,
-        "dynamic_miou": detailed["dynamic_mIoU"] * 100.0,
+        epoch: summarize_metrics(state["hist"], state["correct"], state["labeled"])
+        for epoch, state in state_by_epoch.items()
     }
 
 
@@ -114,11 +130,8 @@ def main():
     data_setting = {"data_root": config.dataset_path}
     dataset = UAVScenesDataset(data_setting, args.split, ValPre(resize_to=(config.image_height, config.image_width)))
 
-    criterion = None
-    model = segmodel(cfg=config, criterion=criterion, norm_layer=nn.BatchNorm2d).to(device)
-
     ckpt_dir = Path(args.checkpoint_dir)
-    results = {}
+    models_by_epoch = {}
 
     for epoch in args.epochs:
         ckpt = ckpt_dir / f"stitchfusion_epoch_{epoch}.pth"
@@ -126,12 +139,18 @@ def main():
             print(f"[WARN] Missing checkpoint: {ckpt}")
             continue
         print(f"\nLoading {ckpt.name} on {device} ...")
+        criterion = None
+        model = segmodel(cfg=config, criterion=criterion, norm_layer=nn.BatchNorm2d).to(device)
         load_model(model, str(ckpt))
-        results[epoch] = evaluate_checkpoint(model, dataset, device, args.batch_size)
+        models_by_epoch[epoch] = model
+
+    if not models_by_epoch:
+        raise SystemExit("No requested checkpoints could be evaluated.")
+
+    print(f"\nRunning one-pass comparison for epochs: {', '.join(map(str, models_by_epoch))}")
+    results = evaluate_checkpoints_one_pass(models_by_epoch, dataset, device, args.batch_size)
 
     epochs = [epoch for epoch in args.epochs if epoch in results]
-    if not epochs:
-        raise SystemExit("No requested checkpoints could be evaluated.")
 
     print("\nSummary")
     print("=" * 104)
