@@ -94,6 +94,20 @@ def get_arguments():
         help="Test batch size",
     )
     parser.add_argument(
+        "--split",
+        type=str,
+        default="test",
+        choices=["val", "test"],
+        help="Dataset split to evaluate",
+    )
+    parser.add_argument(
+        "--branch",
+        type=str,
+        default="ensemble",
+        choices=["rgb", "depth", "ensemble"],
+        help="Which output branch to evaluate",
+    )
+    parser.add_argument(
         "--hag-max-height",
         type=float,
         default=50.0,
@@ -138,7 +152,7 @@ def resolve_amp_dtype(dtype_name: str):
 
 def sliding_window_inference(
     model, rgb, hag, window_size=768, stride=512, num_classes=19,
-    amp_enabled=True, amp_dtype=torch.bfloat16
+    amp_enabled=True, amp_dtype=torch.bfloat16, branch="ensemble"
 ):
     """
     Perform sliding window inference for large images.
@@ -180,7 +194,12 @@ def sliding_window_inference(
 
             with amp_autocast(enabled=amp_enabled, dtype=amp_dtype):
                 outputs, _ = model([rgb_crop, hag_crop])
-            pred = outputs[-1]
+            if branch == "rgb":
+                pred = outputs[0]
+            elif branch == "depth":
+                pred = outputs[1]
+            else:
+                pred = outputs[-1]
 
             if pred.shape[2:] != (h_end - h_start, w_end - w_start):
                 pred = F.interpolate(
@@ -274,7 +293,7 @@ def evaluate(args):
     # Create dataset
     dataset = UAVScenesDataset(
         data_root=args.data_dir,
-        split='test',
+        split=args.split,
         transform=val_transform,
         hag_max_height=args.hag_max_height,
     )
@@ -300,6 +319,8 @@ def evaluate(args):
 
     if rank == 0:
         print(f"Evaluating on {len(dataset)} samples...")
+        print(f"Split: {args.split}")
+        print(f"Branch: {args.branch}")
         print(f"Sliding window: {args.window_size}x{args.window_size}, stride={args.stride}")
         if amp_enabled:
             print(f"AMP: enabled ({args.amp_dtype})")
@@ -341,6 +362,7 @@ def evaluate(args):
                 num_classes=args.num_classes,
                 amp_enabled=amp_enabled,
                 amp_dtype=amp_dtype,
+                branch=args.branch,
             )
 
             if device.type == "cuda":
@@ -497,7 +519,8 @@ def evaluate(args):
         "timestamp": timestamp,
         "checkpoint": args.resume,
         "dataset": "UAVScenes",
-        "split": "test",
+        "split": args.split,
+        "branch": args.branch,
         "num_images": num_images,
         "sliding_window": {
             "window_size": args.window_size,
@@ -537,17 +560,19 @@ def evaluate(args):
         "top_confusions": top_confusions,
     }
 
-    json_path = os.path.join(results_dir, "GeminiFusion_test_results.json")
+    result_stem = f"GeminiFusion_{args.split}_{args.branch}"
+    json_path = os.path.join(results_dir, f"{result_stem}_results.json")
     with open(json_path, "w") as f:
         json.dump(json_results, f, indent=2)
 
     # Save results to TXT
-    txt_path = os.path.join(results_dir, "GeminiFusion_test_results.txt")
+    txt_path = os.path.join(results_dir, f"{result_stem}_results.txt")
     with open(txt_path, "w") as f:
         f.write("=" * 100 + "\n")
-        f.write(f"GeminiFusion Test Evaluation Results\n")
+        f.write(f"GeminiFusion {args.split.upper()} Evaluation Results\n")
         f.write(f"Timestamp: {timestamp}\n")
         f.write(f"Checkpoint: {args.resume}\n")
+        f.write(f"Branch: {args.branch}\n")
         f.write(f"GPU: {gpu_name}\n")
         f.write("=" * 100 + "\n\n")
 
