@@ -3,7 +3,12 @@ Standalone checkpoint evaluation script for Sigma.
 Usage:
   CUDA_VISIBLE_DEVICES=3 python eval_checkpoint.py \
       --checkpoint log_final/log_uavscenes/log_UAVScenes_sigma_tiny/checkpoint/epoch-10.pth \
-      --batch_size 8
+      --batch_size 8 \
+      --split val
+
+Notes:
+  - This script runs batched whole-image evaluation.
+  - For official full-resolution sliding-window TEST evaluation, use eval_slide.py.
 """
 import os
 import sys
@@ -25,6 +30,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--checkpoint', required=True, help='Path to .pth checkpoint')
 parser.add_argument('--batch_size', type=int, default=8)
 parser.add_argument('--gpu', type=int, default=0)
+parser.add_argument('--split', type=str, default='val', choices=['val', 'test'],
+                    help='Dataset split to evaluate. Use eval_slide.py for official slide-mode test.')
 args = parser.parse_args()
 
 device = torch.device(f'cuda:{args.gpu}')
@@ -34,7 +41,7 @@ model = segmodel(cfg=config, criterion=None, norm_layer=nn.BatchNorm2d)
 model.to(device)
 
 # Load checkpoint
-ckpt = torch.load(args.checkpoint, map_location=device)
+ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
 # checkpoint may be state_dict directly or wrapped
 if isinstance(ckpt, dict) and 'model' in ckpt:
     state = ckpt['model']
@@ -44,10 +51,14 @@ else:
     state = ckpt
 model.load_state_dict(state, strict=False)
 model.eval()
-print(f'Loaded: {args.checkpoint}')
+print(f'Loaded checkpoint: {args.checkpoint}')
+print(f'Evaluation split: {args.split}')
+if args.split == 'test':
+    print('Note: eval_checkpoint.py uses whole-image batched evaluation. '
+          'For official slide-mode TEST results, use eval_slide.py.')
 
-# Build val dataset
-val_setting = {
+# Build evaluation dataset
+eval_setting = {
     'rgb_root':       config.rgb_root_folder,
     'rgb_format':     config.rgb_format,
     'gt_root':        config.gt_root_folder,
@@ -62,10 +73,11 @@ val_setting = {
     'dataset_path':   config.dataset_path,
     'hag_max_meters': config.hag_max_meters if hasattr(config, 'hag_max_meters') else 50.0,
 }
-val_pre = ValPre(config)
-val_dataset = UAVScenesDataset(val_setting, 'val', val_pre)
-n = val_dataset.get_length()
-print(f'Val samples: {n}')
+resize = (args.split == 'val')
+eval_pre = ValPre(config, resize=resize)
+eval_dataset = UAVScenesDataset(eval_setting, args.split, eval_pre)
+n = eval_dataset.get_length()
+print(f'{args.split.capitalize()} samples: {n} (resize={resize})')
 
 # Run batched evaluation
 mean = config.norm_mean.reshape(1, 1, 3).astype(np.float32)
@@ -82,7 +94,7 @@ with torch.no_grad():
         batch_rgb, batch_modal, batch_labels = [], [], []
 
         for idx in range(batch_start, batch_end):
-            dd = val_dataset[idx]
+            dd = eval_dataset[idx]
             img   = dd['data'].astype(np.float32)   / 255.0
             modal = dd['modal_x'].astype(np.float32) / 255.0
             batch_rgb.append(  ((img   - mean) / std).transpose(2, 0, 1))
@@ -99,6 +111,6 @@ with torch.no_grad():
 
 iou, mean_IoU, _, freq_IoU, mean_pixel_acc, pixel_acc = compute_score(hist, correct, labeled)
 result_line = print_iou(iou, freq_IoU, mean_pixel_acc, pixel_acc,
-                        val_dataset.class_names, show_no_back=False)
+                        eval_dataset.class_names, show_no_back=False)
 print(result_line)
 print(f'\nmean_IoU: {mean_IoU:.4f}')
