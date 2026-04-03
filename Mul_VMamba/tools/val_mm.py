@@ -169,9 +169,11 @@ def main(cfg):
         transform = get_test_augmentation()
     else:
         transform = get_val_augmentation(eval_cfg['IMAGE_SIZE'])
-    # cases = ['cloud', 'fog', 'night', 'rain', 'sun']
-    cases = ['motionblur', 'overexposure', 'underexposure', 'lidarjitter', 'eventlowres']
-    # cases = [None] # all
+    if cfg['DATASET']['NAME'] == 'UAVScenes':
+        cases = [None]
+    else:
+        # cases = ['cloud', 'fog', 'night', 'rain', 'sun']
+        cases = ['motionblur', 'overexposure', 'underexposure', 'lidarjitter', 'eventlowres']
     
     model_path = resolve_repo_path(active_cfg['MODEL_PATH'])
     if not model_path.exists():
