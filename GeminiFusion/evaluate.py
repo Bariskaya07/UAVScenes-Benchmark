@@ -310,7 +310,7 @@ def evaluate(args):
 
     iterator = enumerate(dataloader)
     if rank == 0:
-        iterator = tqdm(iterator, total=len(dataloader))
+        iterator = enumerate(tqdm(dataloader, total=len(dataloader), desc="Evaluating", leave=True))
 
     with torch.no_grad():
         for i, sample in iterator:

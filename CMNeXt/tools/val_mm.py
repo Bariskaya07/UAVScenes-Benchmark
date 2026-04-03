@@ -270,9 +270,9 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
     total_time = 0
     num_samples = 0
     next_progress = 100
-    progress_bar = tqdm(total=len(dataset), desc="Evaluating", unit="img", leave=True)
+    progress_bar = tqdm(dataloader, total=len(dataloader), desc="Evaluating", leave=True)
 
-    for batch_idx, (inputs, target) in enumerate(dataloader):
+    for batch_idx, (inputs, target) in enumerate(progress_bar):
         if isinstance(inputs, (list, tuple)):
             inputs = [x.to(device) for x in inputs]
         else:
@@ -290,9 +290,6 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
         elapsed = time.time() - start_time
         total_time += elapsed
         num_samples += target.shape[0]
-        progress_bar.update(target.shape[0])
-        progress_bar.set_postfix(lat=f"{elapsed/target.shape[0]:.3f}s/img")
-
         pred = logits.argmax(dim=1)
         metrics.update_batch(pred, target)
 

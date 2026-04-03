@@ -211,10 +211,10 @@ def main():
     all_times = 0
     processed_images = 0
     next_progress = 100
-    progress_bar = tqdm(total=len(dataset), desc="Testing", unit="img", leave=True)
+    progress_bar = tqdm(loader, total=len(loader), desc="Testing", leave=True)
 
     with torch.no_grad():
-        for i, sample in enumerate(loader):
+        for i, sample in enumerate(progress_bar):
             rgb = sample["rgb"].float().cuda()
             hag = sample["depth"].float().cuda()
             target = sample["mask"]
@@ -240,8 +240,6 @@ def main():
             all_times += end_time - start_time
 
             batch_size = target.shape[0]
-            progress_bar.update(batch_size)
-            progress_bar.set_postfix(lat=f"{(end_time - start_time)/batch_size:.3f}s/img")
             for b in range(batch_size):
                 gt = target[b].data.cpu().numpy().astype(np.uint8)
                 gt_idx = gt < num_classes

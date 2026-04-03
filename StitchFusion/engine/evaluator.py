@@ -123,7 +123,7 @@ class Evaluator(object):
         start_eval_time = time.perf_counter()
         logger.info('GPU %s handle %d data.' % (self.devices[0], self.ndata))
         all_results = []
-        for idx in tqdm(range(self.ndata)):
+        for idx in tqdm(range(self.ndata), desc='Evaluating', leave=True):
             dd = self.dataset[idx]
             results_dict = self.func_per_iteration(dd, self.devices[0])
             all_results.append(results_dict)
@@ -148,7 +148,7 @@ class Evaluator(object):
             p.start()
 
         all_results = []
-        for _ in tqdm(range(self.ndata)):
+        for _ in tqdm(range(self.ndata), desc='Evaluating', leave=True):
             t = self.results_queue.get()
             all_results.append(t)
             if self.verbose:
