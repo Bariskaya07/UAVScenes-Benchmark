@@ -721,7 +721,7 @@ def main():
         pred = output.argmax(dim=1).cpu()
         test_metrics_obj.update(pred, label)
 
-        if (i + 1) % 50 == 0:
+        if (i + 1) % 100 == 0 or (i + 1) == len(test_loader):
             logger.info(f'Test: {i + 1}/{len(test_loader)} samples')
 
     # Calculate inference speed

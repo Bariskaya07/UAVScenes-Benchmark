@@ -19,6 +19,7 @@ from dataloader.dataloader import ValPre
 from utils.transforms import pad_image_to_shape, normalize
 
 logger = get_logger()
+SAVE_LOG_INTERVAL = 100
 
 
 class SegEvaluator(Evaluator):
@@ -46,7 +47,15 @@ class SegEvaluator(Evaluator):
 
             # save raw result
             cv2.imwrite(os.path.join(self.save_path, fn), pred)
-            logger.info('Save the image ' + fn)
+            saved_count = getattr(self, '_saved_image_count', 0) + 1
+            self._saved_image_count = saved_count
+            if saved_count % SAVE_LOG_INTERVAL == 0 or saved_count == self.ndata:
+                logger.info(
+                    'Saved %d/%d predictions (latest: %s)',
+                    saved_count,
+                    self.ndata,
+                    fn,
+                )
 
         if self.show_image:
             colors = self.dataset.get_class_colors

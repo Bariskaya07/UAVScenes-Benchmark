@@ -1020,7 +1020,10 @@ def validate(
                 except Exception:
                     pass
 
-            if (progress_mode == "all" or _is_main_process()) and (i == 0 or (i + 1) % 50 == 0):
+            if (
+                (progress_mode == "all" or _is_main_process())
+                and (i == 0 or (i + 1) % 100 == 0 or (i + 1) == len(val_loader))
+            ):
                 try:
                     prefix = f"[Val r{rank}]" if (dist.is_initialized() and dist.get_world_size() > 1) else "[Val]"
                     print_log(f"{prefix} step={i+1}/{len(val_loader)} batch={gt_batch.shape[0]} total_imgs={num_images + gt_batch.shape[0]}")
@@ -1576,7 +1579,7 @@ def main():
 
             test_metrics.update(pred, gt)
 
-            if (i + 1) % 50 == 0 and _is_main_process():
+            if ((i + 1) % 100 == 0 or (i + 1) == len(test_loader)) and _is_main_process():
                 print_log(f'Test: {i + 1}/{len(test_loader)} samples')
 
     # Calculate inference speed

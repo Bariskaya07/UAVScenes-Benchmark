@@ -19,6 +19,7 @@ from utils.transforms import normalize, pad_image_to_shape
 from utils.visualize import show_img
 
 logger = get_logger()
+SAVE_LOG_INTERVAL = 100
 
 
 class SegEvaluator(Evaluator):
@@ -43,7 +44,15 @@ class SegEvaluator(Evaluator):
             ensure_dir(self.save_path + '_color')
             fn = name.replace('/', '_') + '.png'
             cv2.imwrite(os.path.join(self.save_path, fn), pred)
-            logger.info('Save the image ' + fn)
+            saved_count = getattr(self, '_saved_image_count', 0) + 1
+            self._saved_image_count = saved_count
+            if saved_count % SAVE_LOG_INTERVAL == 0 or saved_count == self.ndata:
+                logger.info(
+                    'Saved %d/%d predictions (latest: %s)',
+                    saved_count,
+                    self.ndata,
+                    fn,
+                )
 
         if self.show_image:
             colors = self.dataset.get_class_colors

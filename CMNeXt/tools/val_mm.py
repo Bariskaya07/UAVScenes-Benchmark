@@ -230,8 +230,8 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
                 save_visualization(rgb, pred[i], target[i], save_path, dataset)
 
         # Progress
-        if (batch_idx + 1) % 10 == 0:
-            print(f"Processed {batch_idx + 1}/{len(dataloader)} batches...")
+        if num_samples % 100 == 0 or num_samples == len(dataset):
+            print(f"Processed {num_samples}/{len(dataset)} images...")
 
     avg_time = total_time / num_samples
     fps = 1.0 / avg_time

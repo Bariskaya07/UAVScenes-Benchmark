@@ -381,21 +381,30 @@ def evaluate(model, dataloader, device, cfg, num_classes=19, eval_mode=None, con
         eval_mode = cfg.get(config_key, {}).get('MODE', 'whole')
     print(f"\n[DEBUG] eval_mode = '{eval_mode}' (from cfg['{config_key}']['MODE'])")
     print(f"[DEBUG] cfg['{config_key}'] = {cfg.get(config_key, {})}")
-    total_samples = len(dataloader)
+    total_batches = len(dataloader)
+    processed_images = 0
     eval_start_time = time.time()
 
     for idx, (inputs, target) in enumerate(dataloader):
-        # Progress bar
-        if (idx + 1) % 50 == 0 or idx == 0 or (idx + 1) == total_samples:
-            elapsed = time.time() - eval_start_time
-            eta = elapsed / (idx + 1) * (total_samples - idx - 1) if idx > 0 else 0
-            print(f"\rEvaluating: {idx + 1}/{total_samples} ({100*(idx+1)/total_samples:.1f}%) ETA: {eta/60:.1f}min", end="", flush=True)
         # Move to device
         if isinstance(inputs, (list, tuple)):
             inputs = [x.to(device) for x in inputs]
         else:
             inputs = inputs.to(device)
         target = target.to(device)
+        processed_images += target.shape[0]
+
+        if processed_images % 100 == 0 or idx == 0 or processed_images == len(dataloader.dataset):
+            elapsed = time.time() - eval_start_time
+            images_per_sec = processed_images / elapsed if elapsed > 0 else 0.0
+            remaining_images = max(len(dataloader.dataset) - processed_images, 0)
+            eta = (remaining_images / images_per_sec) if images_per_sec > 0 else 0.0
+            print(
+                f"\rEvaluating: {processed_images}/{len(dataloader.dataset)} images "
+                f"({100 * processed_images / len(dataloader.dataset):.1f}%) ETA: {eta / 60:.1f}min",
+                end="",
+                flush=True,
+            )
 
         if eval_mode == 'slide':
             # Sliding window inference
