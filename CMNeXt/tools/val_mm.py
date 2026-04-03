@@ -151,7 +151,10 @@ def create_model(cfg, checkpoint_path, device):
         backbone=model_cfg.get('BACKBONE', 'mit_b2'),
         num_classes=model_cfg.get('NUM_CLASSES', 19),
         modals=cfg['DATASET']['MODALS'],
-        pretrained=None  # Will load from checkpoint
+        pretrained=None,  # Will load from checkpoint
+        embed_dim=model_cfg.get('EMBED_DIM', 256),
+        aux_in_chans=model_cfg.get('AUX_IN_CHANS', 3),
+        activation_checkpoint=model_cfg.get('ACTIVATION_CHECKPOINT', False),
     )
 
     # Load checkpoint
