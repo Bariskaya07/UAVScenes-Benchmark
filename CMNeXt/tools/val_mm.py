@@ -58,6 +58,23 @@ def load_config(cfg_path):
     return cfg
 
 
+def resolve_amp_dtype(dtype_name):
+    """Map config AMP dtype string to torch dtype."""
+    dtype_name = str(dtype_name).lower()
+    if dtype_name == 'bf16':
+        return torch.bfloat16
+    if dtype_name == 'fp16':
+        return torch.float16
+    raise ValueError(f"Unsupported TRAIN.AMP_DTYPE='{dtype_name}'. Expected 'bf16' or 'fp16'.")
+
+
+def get_amp_settings(cfg, device):
+    """Return autocast kwargs aligned with training config."""
+    enabled = device.type == 'cuda' and cfg.get('TRAIN', {}).get('AMP', True)
+    dtype = resolve_amp_dtype(cfg.get('TRAIN', {}).get('AMP_DTYPE', 'bf16'))
+    return enabled, dtype
+
+
 def _to_serializable(value):
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -174,9 +191,9 @@ def create_model(cfg, checkpoint_path, device):
     return model
 
 
-def sliding_window_inference(model, inputs, cfg):
+def sliding_window_inference(model, inputs, cfg, config_key='TEST'):
     """Sliding window inference with fixed 768x768 crop and 512 stride for fair benchmarking."""
-    eval_cfg = cfg.get('EVAL', {})
+    eval_cfg = cfg.get(config_key, {}) or cfg.get('EVAL', {})
     crop_size = eval_cfg.get('CROP_SIZE', [768, 768])
     stride = eval_cfg.get('STRIDE', [512, 512])
     num_classes = cfg['MODEL']['NUM_CLASSES']
@@ -187,6 +204,8 @@ def sliding_window_inference(model, inputs, cfg):
     else:
         B, C, H, W = inputs.shape
         device = inputs.device
+
+    amp_enabled, amp_dtype = get_amp_settings(cfg, device)
 
     crop_h, crop_w = crop_size
     stride_h, stride_w = stride
@@ -213,7 +232,7 @@ def sliding_window_inference(model, inputs, cfg):
             else:
                 crop_inputs = inputs[:, :, h_start:h_end, w_start:w_end]
 
-            with amp.autocast(device_type='cuda', enabled=(device.type == 'cuda')):
+            with amp.autocast('cuda', enabled=amp_enabled, dtype=amp_dtype):
                 crop_logits = model(crop_inputs)
 
             if crop_logits.shape[2:] != (h_end - h_start, w_end - w_start):
@@ -259,7 +278,7 @@ def save_visualization(rgb, pred, target, save_path, dataset):
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vis=False, vis_dir=None):
+def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vis=False, vis_dir=None, config_key='TEST'):
     """Evaluate model."""
     metrics = UAVScenesMetrics(num_classes=cfg['MODEL']['NUM_CLASSES'], ignore_label=255)
 
@@ -282,9 +301,10 @@ def evaluate(model, dataloader, dataset, device, cfg, eval_mode='slide', save_vi
         start_time = time.time()
 
         if eval_mode == 'slide':
-            logits = sliding_window_inference(model, inputs, cfg)
+            logits = sliding_window_inference(model, inputs, cfg, config_key=config_key)
         else:
-            with amp.autocast(device_type='cuda', enabled=(device.type == 'cuda')):
+            amp_enabled, amp_dtype = get_amp_settings(cfg, device)
+            with amp.autocast('cuda', enabled=amp_enabled, dtype=amp_dtype):
                 logits = model(inputs)
 
         elapsed = time.time() - start_time
@@ -352,6 +372,7 @@ def main():
 
     metrics, avg_time, fps = evaluate(
         model, dataloader, dataset, device, cfg, eval_mode=eval_mode,
+        config_key=args.split.upper(),
         save_vis=args.save_vis, vis_dir=args.vis_dir
     )
 
