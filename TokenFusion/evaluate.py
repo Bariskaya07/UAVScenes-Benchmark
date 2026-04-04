@@ -52,6 +52,8 @@ def parse_args():
                         help='Inference mode: slide for native benchmark, whole for fast full-image eval')
     parser.add_argument('--legacy-resize-eval', action='store_true',
                         help='Use legacy resize-based transform before evaluation')
+    parser.add_argument('--num-images', type=int, default=None,
+                        help='Limit evaluation to the first N images for quick speed checks')
     parser.add_argument('--batch-size', type=int, default=1,
                         help='Test batch size')
     parser.add_argument('--output', type=str, default=str(Path(__file__).resolve().parent / 'results2'),
@@ -92,7 +94,8 @@ def build_model(cfg, checkpoint_path, device):
     return model
 
 
-def build_dataloader(cfg, split='test', batch_size_override=None, legacy_resize_eval=False, eval_mode='slide'):
+def build_dataloader(cfg, split='test', batch_size_override=None, legacy_resize_eval=False, eval_mode='slide',
+                     num_images=None):
     """Build test dataloader.
 
     Note:
@@ -121,6 +124,9 @@ def build_dataloader(cfg, split='test', batch_size_override=None, legacy_resize_
         transform=transform,
         hag_max_height=cfg.hag.max_meters
     )
+
+    if num_images is not None:
+        test_dataset.samples = test_dataset.samples[:num_images]
 
     if batch_size_override is not None:
         batch_size = batch_size_override
@@ -309,6 +315,7 @@ def main():
         batch_size_override=args.batch_size,
         legacy_resize_eval=args.legacy_resize_eval,
         eval_mode=args.eval_mode,
+        num_images=args.num_images,
     )
 
     # Evaluate

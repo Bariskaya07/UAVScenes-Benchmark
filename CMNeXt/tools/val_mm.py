@@ -44,6 +44,7 @@ def parse_args():
     parser.add_argument('--cfg', type=str, required=True, help='Config file path')
     parser.add_argument('--checkpoint', type=str, default=None, help='Checkpoint path')
     parser.add_argument('--split', type=str, default='test', choices=['val', 'test'], help='Dataset split to evaluate')
+    parser.add_argument('--num-images', type=int, default=None, help='Limit evaluation to the first N images for quick speed checks')
     parser.add_argument('--eval-mode', type=str, default=None, choices=['whole', 'slide'],
                         help='Override evaluation mode from config')
     parser.add_argument('--legacy-resize-eval', action='store_true',
@@ -133,7 +134,7 @@ def save_results(metrics, output_dir, avg_time, fps, split, checkpoint_path, num
     print(f"Saved summary to: {txt_path}")
 
 
-def create_dataloader(cfg, split='test', batch_size_override=None):
+def create_dataloader(cfg, split='test', batch_size_override=None, num_images=None):
     """Create DataLoader for evaluation."""
     dataset_cfg = cfg['DATASET']
     transform = get_test_transform(cfg)
@@ -146,6 +147,9 @@ def create_dataloader(cfg, split='test', batch_size_override=None):
         aux_channels=dataset_cfg.get('AUX_CHANNELS', 3),
         hag_max_meters=dataset_cfg.get('HAG_MAX_METERS', 50.0),
     )
+
+    if num_images is not None:
+        dataset.samples = dataset.samples[:num_images]
 
     if batch_size_override is not None:
         batch_size = batch_size_override
@@ -374,7 +378,12 @@ def main():
 
     # Create dataloader
     print(f"\nCreating dataloader for '{args.split}' split...")
-    dataloader, dataset = create_dataloader(cfg, split=args.split, batch_size_override=args.batch_size)
+    dataloader, dataset = create_dataloader(
+        cfg,
+        split=args.split,
+        batch_size_override=args.batch_size,
+        num_images=args.num_images,
+    )
     print(f"{args.split.capitalize()} set: {len(dataset)} samples")
 
     # Create model
@@ -396,6 +405,7 @@ def main():
     else:
         print(f"Mode: {eval_mode} (from cfg['{args.split.upper()}']['MODE'])")
     print(f"Legacy resize eval: {'enabled' if args.legacy_resize_eval else 'disabled'}")
+    print(f"Num images: {args.num_images if args.num_images is not None else 'full split'}")
 
     metrics, avg_time, fps = evaluate(
         model, dataloader, dataset, device, cfg, eval_mode=eval_mode,

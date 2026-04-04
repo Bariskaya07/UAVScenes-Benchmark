@@ -64,6 +64,8 @@ def get_arguments():
                         help="Path to model checkpoint")
     parser.add_argument("--split", type=str, default="test",
                         choices=["test", "val"])
+    parser.add_argument("--num-images", type=int, default=None,
+                        help="Limit evaluation to the first N images for quick speed checks")
     parser.add_argument("--save-image", type=int, default=0,
                         help="Number of images to save (-1 for all)")
     parser.add_argument("--batch-size", type=int, default=1,
@@ -235,6 +237,9 @@ def main():
     dataset = UAVScenesDataset(
         data_root=cfg.dataset.data_path, split=args.split,
         transform=composed_test, hag_max_height=cfg.hag.max_meters)
+
+    if args.num_images is not None:
+        dataset.samples = dataset.samples[:args.num_images]
 
     loader = torch.utils.data.DataLoader(
         dataset, batch_size=args.batch_size, shuffle=False,

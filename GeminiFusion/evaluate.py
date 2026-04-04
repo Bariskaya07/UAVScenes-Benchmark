@@ -101,6 +101,12 @@ def get_arguments():
         help="Dataset split to evaluate",
     )
     parser.add_argument(
+        "--num-images",
+        type=int,
+        default=None,
+        help="Limit evaluation to the first N images for quick speed checks",
+    )
+    parser.add_argument(
         "--branch",
         type=str,
         default="ensemble",
@@ -340,6 +346,9 @@ def evaluate(args):
         hag_max_height=args.hag_max_height,
     )
 
+    if args.num_images is not None:
+        dataset.samples = dataset.samples[:args.num_images]
+
     sampler = None
     if distributed:
         sampler = DistributedSampler(
@@ -365,6 +374,7 @@ def evaluate(args):
         print(f"Branch: {args.branch}")
         print(f"Eval mode: {args.eval_mode}")
         print(f"Legacy resize: {'enabled' if args.legacy_resize_eval else 'disabled'}")
+        print(f"Num images: {args.num_images if args.num_images is not None else 'full split'}")
         if args.eval_mode == "slide":
             print(f"Sliding window: {args.window_size}x{args.window_size}, stride={args.stride}")
         if amp_enabled:
