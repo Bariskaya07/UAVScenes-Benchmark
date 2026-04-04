@@ -33,6 +33,11 @@ NEW_EPOCH_CKPT_PATTERN = re.compile(r"^stitchfusion_epoch_(\d+)\.pth$")
 LEGACY_EPOCH_CKPT_PATTERN = re.compile(r"^epoch-(\d+)\.pth$")
 
 
+def tensor_to_numpy_fp32(tensor):
+    """OpenCV/NumPy do not accept bfloat16 tensors directly."""
+    return tensor.detach().float().cpu().numpy()
+
+
 class Evaluator(object):
     def __init__(
         self,
@@ -210,7 +215,7 @@ class Evaluator(object):
             pred = self.val_func_process(scaled_img, device)
             pred = pred.permute(1, 2, 0)
             processed_pred += cv2.resize(
-                pred.cpu().numpy(),
+                tensor_to_numpy_fp32(pred),
                 (output_size[1], output_size[0]),
                 interpolation=cv2.INTER_LINEAR,
             )
@@ -266,7 +271,11 @@ class Evaluator(object):
             score = score[:, margin[0]:(score.shape[1] - margin[1]), margin[2]:(score.shape[2] - margin[3])]
 
         score = score.permute(1, 2, 0)
-        data_output = cv2.resize(score.cpu().numpy(), (ori_shape[1], ori_shape[0]), interpolation=cv2.INTER_LINEAR)
+        data_output = cv2.resize(
+            tensor_to_numpy_fp32(score),
+            (ori_shape[1], ori_shape[0]),
+            interpolation=cv2.INTER_LINEAR,
+        )
         return data_output
 
     def val_func_process(self, input_data, device=None):
@@ -346,7 +355,7 @@ class Evaluator(object):
             pred = self.val_func_process_rgbX(input_data, input_modal_x, device)
             pred = pred.permute(1, 2, 0)
             processed_pred += cv2.resize(
-                pred.cpu().numpy(),
+                tensor_to_numpy_fp32(pred),
                 (output_size[1], output_size[0]),
                 interpolation=cv2.INTER_LINEAR,
             )
@@ -373,7 +382,7 @@ class Evaluator(object):
             for batch_idx in range(batch_size):
                 pred = preds[batch_idx].permute(1, 2, 0)
                 processed_pred[batch_idx] += cv2.resize(
-                    pred.cpu().numpy(),
+                    tensor_to_numpy_fp32(pred),
                     (output_size[1], output_size[0]),
                     interpolation=cv2.INTER_LINEAR,
                 )
@@ -465,7 +474,11 @@ class Evaluator(object):
             score = score[:, margin[0]:(score.shape[1] - margin[1]), margin[2]:(score.shape[2] - margin[3])]
 
         score = score.permute(1, 2, 0)
-        return cv2.resize(score.cpu().numpy(), (ori_shape[1], ori_shape[0]), interpolation=cv2.INTER_LINEAR)
+        return cv2.resize(
+            tensor_to_numpy_fp32(score),
+            (ori_shape[1], ori_shape[0]),
+            interpolation=cv2.INTER_LINEAR,
+        )
 
     def scale_process_rgbX_batch(self, imgs, modal_xs, ori_shape, crop_size, stride_rate, device=None):
         batch_size = len(imgs)
@@ -534,7 +547,7 @@ class Evaluator(object):
             score_b = score[batch_idx].permute(1, 2, 0)
             outputs.append(
                 cv2.resize(
-                    score_b.cpu().numpy(),
+                    tensor_to_numpy_fp32(score_b),
                     (ori_shape[1], ori_shape[0]),
                     interpolation=cv2.INTER_LINEAR,
                 )
