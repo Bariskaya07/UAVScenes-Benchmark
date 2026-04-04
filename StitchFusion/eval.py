@@ -164,6 +164,7 @@ if __name__ == '__main__':
     parser.add_argument('--show_image', '-s', default=False, action='store_true')
     parser.add_argument('--eval-mode', default='slide', choices=['slide', 'whole'], help='Inference mode')
     parser.add_argument('--legacy-resize-eval', default=False, action='store_true', help='Resize inputs to 768x768 before eval to mimic fast whole-image validation')
+    parser.add_argument('--num-images', default=None, type=int, help='Limit evaluation to the first/randomized N images for quick speed checks')
     parser.add_argument('--save_path', '-p', default=os.path.join(config.root_dir, 'results2'))
     parser.add_argument('--save-preds', default=False, action='store_true', help='Save per-image prediction PNGs')
     parser.add_argument('--batch-size', default=config.test_batch_size, type=int, help='Eval batch size for batched sliding-window inference')
@@ -175,11 +176,12 @@ if __name__ == '__main__':
     logger.info('AMP: enabled (dtype=%s)', amp_dtype_name)
     logger.info('Eval mode: %s', args.eval_mode)
     logger.info('Legacy resize eval: %s', 'enabled' if args.legacy_resize_eval else 'disabled')
+    logger.info('Num images: %s', args.num_images if args.num_images is not None else 'full test set')
     network = segmodel(cfg=config, criterion=None, norm_layer=nn.BatchNorm2d)
     data_setting = {'data_root': config.dataset_path}
     resize_to = (config.image_height, config.image_width) if args.legacy_resize_eval else None
     val_pre = ValPre(resize_to=resize_to)
-    dataset = UAVScenesDataset(data_setting, 'test', val_pre)
+    dataset = UAVScenesDataset(data_setting, 'test', val_pre, file_length=args.num_images)
     ensure_dir(args.save_path)
     results_log_file = os.path.join(args.save_path, 'stitchfusion_results.txt')
     results_log_link = os.path.join(args.save_path, 'stitchfusion_results_last.txt')
