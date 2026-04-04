@@ -319,7 +319,12 @@ class Evaluator(object):
         input_modal_x_list = []
         margins = []
         for img, modal_x in batch_items:
-            input_data, input_modal_x, margin = self.process_image_rgbX(img, modal_x, crop_size)
+            processed = self.process_image_rgbX(img, modal_x, crop_size)
+            if crop_size is None:
+                input_data, input_modal_x = processed
+                margin = (0, 0, 0, 0)
+            else:
+                input_data, input_modal_x, margin = processed
             input_data_list.append(input_data)
             input_modal_x_list.append(input_modal_x)
             margins.append(margin)
@@ -331,6 +336,48 @@ class Evaluator(object):
         input_data = np.ascontiguousarray(np.stack(input_data_list, axis=0), dtype=np.float32)
         input_modal_x = np.ascontiguousarray(np.stack(input_modal_x_list, axis=0), dtype=np.float32)
         return input_data, input_modal_x, first_margin
+
+    def whole_eval_rgbX(self, img, modal_x, output_size, device=None):
+        processed_pred = np.zeros((output_size[0], output_size[1], self.class_num), dtype=np.float32)
+        for s in self.multi_scales:
+            img_scale = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+            modal_x_scale = cv2.resize(modal_x, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+            input_data, input_modal_x = self.process_image_rgbX(img_scale, modal_x_scale)
+            pred = self.val_func_process_rgbX(input_data, input_modal_x, device)
+            pred = pred.permute(1, 2, 0)
+            processed_pred += cv2.resize(
+                pred.cpu().numpy(),
+                (output_size[1], output_size[0]),
+                interpolation=cv2.INTER_LINEAR,
+            )
+        return processed_pred.argmax(2)
+
+    def whole_eval_rgbX_batch(self, imgs, modal_xs, output_size, device=None):
+        batch_size = len(imgs)
+        processed_pred = np.zeros(
+            (batch_size, output_size[0], output_size[1], self.class_num),
+            dtype=np.float32,
+        )
+        for s in self.multi_scales:
+            img_scale = [
+                cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+                for img in imgs
+            ]
+            modal_x_scale = [
+                cv2.resize(modal_x, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
+                for modal_x in modal_xs
+            ]
+            batch_pairs = list(zip(img_scale, modal_x_scale))
+            input_data, input_modal_x, _ = self._stack_rgbx_batch(batch_pairs, crop_size=None)
+            preds = self.val_func_process_rgbX_batch(input_data, input_modal_x, device)
+            for batch_idx in range(batch_size):
+                pred = preds[batch_idx].permute(1, 2, 0)
+                processed_pred[batch_idx] += cv2.resize(
+                    pred.cpu().numpy(),
+                    (output_size[1], output_size[0]),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+        return processed_pred.argmax(3)
 
     def sliding_eval_rgbX(self, img, modal_x, crop_size, stride_rate, device=None):
         crop_size = to_2tuple(crop_size)

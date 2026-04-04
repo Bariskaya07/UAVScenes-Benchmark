@@ -29,7 +29,11 @@ class SegEvaluator(Evaluator):
         modal_x = data['modal_x']
         name = data['fn']
         start = time.perf_counter()
-        pred = self.sliding_eval_rgbX(img, modal_x, config.eval_crop_size, config.eval_stride_rate, device)
+        eval_mode = getattr(self, 'eval_mode', 'slide')
+        if eval_mode == 'whole':
+            pred = self.whole_eval_rgbX(img, modal_x, label.shape, device)
+        else:
+            pred = self.sliding_eval_rgbX(img, modal_x, config.eval_crop_size, config.eval_stride_rate, device)
         elapsed = time.perf_counter() - start
         hist_tmp, labeled_tmp, correct_tmp = hist_info(config.num_classes, pred, label)
         results_dict = {
@@ -84,7 +88,11 @@ class SegEvaluator(Evaluator):
         names = [item['fn'] for item in batch_data]
 
         start = time.perf_counter()
-        preds = self.sliding_eval_rgbX_batch(imgs, modal_xs, config.eval_crop_size, config.eval_stride_rate, device)
+        eval_mode = getattr(self, 'eval_mode', 'slide')
+        if eval_mode == 'whole':
+            preds = self.whole_eval_rgbX_batch(imgs, modal_xs, labels[0].shape, device)
+        else:
+            preds = self.sliding_eval_rgbX_batch(imgs, modal_xs, config.eval_crop_size, config.eval_stride_rate, device)
         elapsed = time.perf_counter() - start
         elapsed_per_image = elapsed / max(1, len(batch_data))
 
@@ -184,6 +192,8 @@ if __name__ == "__main__":
     parser.add_argument('-v', '--verbose', default=False, action='store_true')
     parser.add_argument('--show_image', '-s', default=False,
                         action='store_true')
+    parser.add_argument('--eval-mode', default='slide', choices=['slide', 'whole'], help='Inference mode')
+    parser.add_argument('--legacy-resize-eval', default=False, action='store_true', help='Resize inputs to 768x768 before eval to mimic fast whole-image validation')
     parser.add_argument('--batch-size', default=1, type=int, help='Eval batch size for batched sliding-window inference')
     parser.add_argument('--save-preds', default=False, action='store_true', help='Save per-image prediction PNGs')
     parser.add_argument('--save_path', '-p', default=os.path.join(config.root_dir, 'results2'))
@@ -193,13 +203,16 @@ if __name__ == "__main__":
     amp_dtype_name = str(getattr(config, 'amp_dtype', 'bf16')).lower()
     amp_dtype = torch.bfloat16 if amp_dtype_name == 'bf16' else torch.float16
     logger.info('AMP: enabled (dtype=%s)', amp_dtype_name)
+    logger.info('Eval mode: %s', args.eval_mode)
+    logger.info('Legacy resize eval: %s', 'enabled' if args.legacy_resize_eval else 'disabled')
     logger.info('Eval batch size: %d', args.batch_size)
 
     network = segmodel(cfg=config, criterion=None, norm_layer=nn.BatchNorm2d)
     data_setting = {
         'data_root': config.dataset_path,
     }
-    val_pre = ValPre(resize_to=None)  # No resize, no normalize — handled by SegEvaluator
+    resize_to = (config.image_height, config.image_width) if args.legacy_resize_eval else None
+    val_pre = ValPre(resize_to=resize_to)  # No normalize — handled by SegEvaluator
     dataset = UAVScenesDataset(data_setting, 'test', val_pre)
     ensure_dir(args.save_path)
     results_log_file = os.path.join(args.save_path, 'cmx_results.txt')
@@ -219,5 +232,6 @@ if __name__ == "__main__":
                                  batch_size=args.batch_size,
                                  use_amp=torch.cuda.is_available(),
                                  amp_dtype=amp_dtype)
+        segmentor.eval_mode = args.eval_mode
         segmentor.run(config.checkpoint_dir, args.epochs, results_log_file,
                       results_log_link)
